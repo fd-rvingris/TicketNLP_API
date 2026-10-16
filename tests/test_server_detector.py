@@ -379,6 +379,8 @@ def rules_only_model():
     ("Restart the instance named FINANCE please", {"FINANCE": ("bare_instance", "instance:name_after_instance")}),
     ("Check service MSSQL$PAYROLL now", {"PAYROLL": ("bare_instance", "instance:service_suffix")}),
     ("Failover on instance abc-sql01 today", {"abc-sql01": ("host", "host:after_server_word")}),
+    ("Connect to dbfake7:1433 now", {"dbfake7": ("host", "host:port")}),
+    ("Connect to tcp:dbfake8 now", {"dbfake8": ("host", "host:port")}),
     ("Failover on instance db01.corp.local today", {"db01.corp.local": ("host", "host:after_server_word")}),
     (r"Data Source=fakesql02\SALES,1433;", {r"fakesql02\SALES,1433": ("host_instance", "host:host_instance")}),
     ("Server=dbfake;Database=x", {"dbfake": ("host", "host:connection_string")}),
@@ -395,6 +397,7 @@ def test_rules_detect_without_the_model(text, expected):
 
 @pytest.mark.parametrize("text", [
     r"Log in as CORP\jsmith please",  # an AD login: no digit in the host part, not known
+    "Open localhost:8080 and portal7:443 in a browser",  # web ports, not SQL Server ports
     "the instance on this server is slow",  # filler words next to the cues
     "Server rebooted at noon",
 ])
@@ -429,7 +432,7 @@ def test_known_and_near_known_names_are_detected_without_the_model():
     t = human(9, "aautdb02 and appmain are fine; AAUTBD01 typo, aautdb07 is new; REPORTS is slow")
     found = {x["text"]: x for x in sd.detect_servers(t, known_names_directory(), rules_only_model())}
     assert found["aautdb02"]["rule"] == "host:known_name" and found["aautdb02"]["status"] == "known"
-    assert found["appmain"]["rule"] == "host:known_name"
+    assert "appmain" not in found  # known, but digit-free directory names are left to the model
     assert found["AAUTBD01"]["rule"] == "host:near_known_name"
     assert found["AAUTBD01"]["status"] == "typo_of_known" and found["AAUTBD01"]["host"] == "aautdb01"
     assert found["aautdb07"]["rule"] == "host:near_known_name"

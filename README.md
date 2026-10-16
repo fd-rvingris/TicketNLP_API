@@ -63,6 +63,9 @@ the output schema and the hand-labeled results.
     python split_alerts.py data\train_tickets.csv     # writes train_tickets_alerts.csv and _human.csv
     python server_detector.py evaluate                # non-LLM server and instance detector (see below)
     python detector_ui.py --open                      # try the saved detector on pasted text or a Zendesk ticket
+    python claude_pack.py labels                      # server-labeling batches for a Claude chat (docs/claude-labeling-prompt.md)
+    python claude_pack.py taxonomy                    # digest of all tickets for a taxonomy chat (docs/claude-taxonomy-prompt.md)
+    python claude_pack.py import-labels data\claude_pack\returned\labels_*.jsonl
 
 Runs are resumable: already classified tickets in a run are skipped. A run
 keeps its model, effort, prompt version and taxonomy version; reusing its name

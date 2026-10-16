@@ -648,8 +648,9 @@ def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, win
     in_unc = "unc" in flags
     base = {"text": part, "start": s, "end": e, "in_conn": in_conn, "in_unc": in_unc,
             "in_url": text[max(0, s - 2):s] == "//", "service": "service" in flags,
-            "has_port": parsed.port is not None or "port" in flags, "after_label": _after_label(text, s),
-            "is_ip": bool(IPV4_RE.match(host))}
+            "has_port": parsed.port is not None or "port" in flags or text[max(0, s - 4):s].lower() == "tcp:",
+            "after_label": _after_label(text, s),
+            "is_ip": bool(IPV4_RE.match(host)), "sql_port": _sql_port(text, s, e, part)}
     if "\\" in part:
         if not (host_name_ok(host, 2) and instance and INSTANCE_RE.match(instance)):
             return None
@@ -660,7 +661,8 @@ def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, win
     is_file = dotted and head.rsplit(".", 1)[-1].lower() in FILE_EXTS
     email = text[e:e + 1] == "@" or text[max(0, s - 1):s] == "@"
     strong = in_conn or in_unc or base["has_port"]
-    host_ok = (host_name_ok(host) and not is_file and not email and (strong or host not in know.stop))
+    host_ok = (host_name_ok(host) and not is_file and not email and host != "localhost"
+               and (strong or host not in know.stop))
     cue = window_cue or base["service"] or (text[max(0, s - 1):s] == "\\" and not in_unc)
     inst_ok = (not dotted and not base["has_port"] and not in_unc and not email and bool(BARE_INSTANCE_RE.match(part))
                and bool(re.search(r"[A-Za-z]", part))
@@ -671,6 +673,15 @@ def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, win
             "host_ok": host_ok, "inst_ok": inst_ok, "cue": cue}
 
 
+def _sql_port(text: str, s: int, e: int, part: str) -> bool:
+    """True for a port written the SQL Server way: HOST,PORT, tcp:HOST, or a colon port of 1433 or
+    1434. Other colon ports (host:8080, site:443) are web addresses."""
+    if "," in part or text[max(0, s - 4):s].lower() == "tcp:":
+        return True
+    m = re.match(r":(\d{2,5})(?!\d)", text[e:e + 6])
+    return bool(m) and m.group(1) in ("1433", "1434")
+
+
 def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | None = None) -> str | None:
     """The name of the rule that marks this candidate as a host or an instance, or None. Instance
     rules: an MSSQL$ or SQLAgent$ service suffix, '<name> instance', 'instance <name>' and 'instance
@@ -679,16 +690,19 @@ def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | Non
     digit after server, host, vm and the like, or after 'instance on'. Alert template lines
     ('Instance SQL01') are left to the model.
 
-    Known names of the ticket's client, as a backup to the model: a known host; a near known host (one
-    edit with the same pattern, or only trailing digits differ; 5 or more characters with a digit, so
-    ordinary words do not match); and a known instance name written in upper case (instance names
-    are often ordinary words, so lower case 'reports' in running text does not count)."""
+    Known names of the ticket's client, as a backup to the model: a known host with a digit (the
+    directory holds digit-free abbreviations and words from dw_servers; against hand labels those
+    matched correctly 16% of the time, against 75% with a digit); a near known host (one edit with the
+    same pattern, or only trailing digits differ; 5 or more characters with a digit); and a known
+    instance name written in upper case (instance names are often ordinary words, so lower case
+    'reports' in running text does not count). A port counts only when written the SQL Server way."""
     prev1 = words[ti - 1] if ti >= 1 else ""
     prev2 = words[ti - 2] if ti >= 2 else ""
     next1 = words[ti + 1] if ti + 1 < len(words) else ""
     name = c["host"]
+    has_digit = any(ch.isdigit() for ch in name)
     own_hosts = know.profile(client, "host").names
-    if c["kind"] == "token" and c["host_ok"] and name in own_hosts:
+    if c["kind"] == "token" and c["host_ok"] and has_digit and name in own_hosts:
         return "host:known_name"
     if c["inst_ok"] and c["kind"] == "token" and name not in FILLER_WORDS:
         if c["service"]:
@@ -708,7 +722,6 @@ def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | Non
             return "instance:known_name"
     if not c["host_ok"]:
         return None
-    has_digit = any(ch.isdigit() for ch in name)
     if c["kind"] == "host_instance":
         if has_digit or c["in_conn"] or name in know.all_hosts:
             return "host:host_instance"
@@ -717,7 +730,7 @@ def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | Non
         return "host:connection_string"
     if c["in_unc"]:
         return "host:unc_path"
-    if c["has_port"]:
+    if c["has_port"] and c["sql_port"]:
         return "host:port"
     if has_digit and not c["is_ip"] and (prev1 in HOST_CUE_WORDS | {"instance"}
                                          or (prev1 == "on" and prev2 in HOST_CUE_WORDS | {"instance"})):
