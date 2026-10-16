@@ -26,6 +26,7 @@ import requests
 
 import server_detector as sd
 import server_labels as sl
+from alert_parser import backup_spans, table_spans
 from common import DATA_DIR, ZendeskClient, load_env, make_ticket, now_iso, read_jsonl
 
 PAGE_PATH = Path(__file__).parent / "detector_ui.html"
@@ -127,6 +128,11 @@ def analyze(ticket: dict, bundle: dict, names: dict[str, str], *, host_threshold
                    "instances": len(directory.instances(client)) if known else 0},
         "thresholds": {"host": th_h, "instance": th_i},
         "detections": found,
+        "alert_fields": ticket.get("alert_fields"),
+        # Where the table layout's values sit in the description, for highlighting
+        "alert_spans": [{**sp, "in": sp.get("in", "description")} for sp in
+                        table_spans(ticket.get("description") or "")
+                        + backup_spans(ticket.get("subject") or "", ticket.get("description") or "")],
         "candidates": scored_candidates(ticket, directory, model),
         "max_chars": model.max_chars,
         "analyzed_at": now_iso(),

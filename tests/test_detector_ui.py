@@ -69,6 +69,16 @@ def test_analyze_text_returns_detections_and_all_candidates():
     assert r["thresholds"] == {"host": 0.5, "instance": 0.5}
 
 
+def test_analyze_text_returns_table_alert_fields_and_spans():
+    text = ("Client Name Environment Name Server Alert Type Open Date (UTC) Message\n"
+            "Fake Co (7) Env1 (E1) FAKESQL09 Collection errors 2025-01-18 11:00:48 UTC ServerName: FAKESQL09 (SQL Server)")
+    r = app().analyze_text({"text": text})
+    assert r["is_alert"] and r["alert_fields"]["server"] == "FAKESQL09"
+    spans = {s["field"]: text[s["start"]:s["end"]] for s in r["alert_spans"]}
+    assert spans["client_name"] == "Fake Co" and spans["alert_name"] == "Collection errors"
+    assert app().analyze_text({"text": "SQLA01 is down"})["alert_spans"] == []
+
+
 def test_analyze_text_thresholds_and_validation():
     a = app()
     r = a.analyze_text({"text": "SQLA01 is down", "client": "100", "host_threshold": 0.95})

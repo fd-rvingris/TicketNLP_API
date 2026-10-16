@@ -11,6 +11,8 @@
     --accent: #1f5f8b; --accent-soft: #e3eef6; --alert: #8a5a00; --alert-soft: #fbf0d9;
     --bad: #a12a2a; --bad-soft: #f8e2e2; --good: #1e6b3a; --good-soft: #def1e4;
     --host: #d5e8f7; --host-line: #1f5f8b; --pair: #dcd3f3; --pair-line: #5a3fa0; --inst: #fbe3c6; --inst-line: #9a5a00;
+    --af-client: #def1e4; --af-client-line: #1e6b3a; --af-env: #d9f0ee; --af-env-line: #00695f;
+    --af-type: #fbf0d9; --af-type-line: #8a5a00; --af-date: #eceff3; --af-date-line: #5d6879;
     --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
     --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
     color-scheme: light;
@@ -21,6 +23,8 @@
       --accent: #7db6df; --accent-soft: #1f3344; --alert: #f0c060; --alert-soft: #3a2f17;
       --bad: #f09a9a; --bad-soft: #3d2023; --good: #8fd3a5; --good-soft: #1b3324;
       --host: #1d3a52; --host-line: #7db6df; --pair: #34295a; --pair-line: #b9a6f0; --inst: #4a3417; --inst-line: #f0b060;
+      --af-client: #1b3324; --af-client-line: #8fd3a5; --af-env: #13302e; --af-env-line: #6fd0c4;
+      --af-type: #3a2f17; --af-type-line: #f0c060; --af-date: #262c35; --af-date-line: #9aa4b3;
       color-scheme: dark;
     }
   }
@@ -62,6 +66,13 @@
   mark.host_instance { background: var(--pair); border-color: var(--pair-line); }
   mark.bare_instance { background: var(--inst); border-color: var(--inst-line); }
   mark.flash { outline: 2px solid var(--accent); }
+  /* Parsed alert fields: dotted underline, one colour per group */
+  mark.af { border-bottom-style: dotted; }
+  mark.af-client { background: var(--af-client); border-color: var(--af-client-line); }
+  mark.af-env { background: var(--af-env); border-color: var(--af-env-line); }
+  mark.af-type { background: var(--af-type); border-color: var(--af-type-line); }
+  mark.af-date, mark.af-other { background: var(--af-date); border-color: var(--af-date-line); }
+  mark.af-server { background: var(--host); border-color: var(--host-line); }
   .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
   .legend mark { cursor: default; }
   .table-wrap { overflow-x: auto; }
@@ -180,7 +191,7 @@
     "instance:name_after_instance": "rule: instance <name>", "instance:known_name": "rule: client's known instance",
     "host:known_name": "rule: client's known host", "host:near_known_name": "rule: close to a known host",
     "host:host_instance": "rule: HOST\\INSTANCE", "host:connection_string": "rule: connection string",
-    "host:unc_path": "rule: UNC path", "host:port": "rule: name with port", "host:after_server_word": "rule: after server/host/instance on",
+    "host:alert_field": "rule: server named in the alert's fields", "host:unc_path": "rule: UNC path", "host:port": "rule: name with port", "host:after_server_word": "rule: after server/host/instance on",
   };
   const ruleLabel = r => RULE_TEXT[r] || r;
 
@@ -219,15 +230,33 @@
 
   // --- Rendering -------------------------------------------------------------
 
-  function highlighted(text, dets, field) {
-    const spans = dets.map((d, i) => ({ ...d, i })).filter(d => d.field === field).sort((a, b) => a.start - b.start);
+  // Parsed alert fields (table layout): the colour group of each field and its name on the page.
+  const AF_GROUP = { client_name: "client", client_id: "client", environment: "env", environment_code: "env",
+                     alert_name: "type", open_date: "date", server: "server", backup_server: "server",
+                     database: "client", environment_note: "env", backup_type: "type", latest_backup: "date" };
+  const AF_NAME = { client_name: "client name", client_id: "client id", environment: "environment name",
+                    environment_code: "environment code", alert_name: "alert type", open_date: "open date (UTC)",
+                    latest_backup: "latest backup date", hours_without: "hours without backup",
+                    minutes_without: "minutes without backup", backup_server: "latest backup server" };
+  const afName = f => AF_NAME[f] || human(f);
+
+  function highlighted(text, dets, field, alertSpans) {
+    const detSpans = dets.map((d, i) => ({ ...d, i, det: true })).filter(d => d.field === field);
+    // Alert fields are highlighted unless a detection covers the same text; the message is not, as its
+    // own "Label: value" parts are.
+    const afSpans = (alertSpans || []).filter(s => (s.in || "description") === field && s.field !== "message"
+      && !detSpans.some(d => d.start < s.end && s.start < d.end));
+    const spans = [...detSpans, ...afSpans].sort((a, b) => a.start - b.start);
     const out = []; let pos = 0;
     for (const d of spans) {
-      if (d.start < pos) continue; // overlapping detections keep the first
+      if (d.start < pos) continue; // overlapping spans keep the first
       out.push(text.slice(pos, d.start));
-      out.push(el("mark", { class: d.kind, id: `det-${d.i}`,
-        title: `${human(d.kind)} · ${human(d.status)} · score ${d.score.toFixed(2)}` +
-               (d.host ? ` · host ${d.host}` : "") + (d.instance ? ` · instance ${d.instance}` : "") }, text.slice(d.start, d.end)));
+      out.push(d.det
+        ? el("mark", { class: d.kind, id: `det-${d.i}`,
+            title: `${human(d.kind)} · ${human(d.status)} · score ${d.score.toFixed(2)}` +
+                   (d.host ? ` · host ${d.host}` : "") + (d.instance ? ` · instance ${d.instance}` : "") }, text.slice(d.start, d.end))
+        : el("mark", { class: `af af-${AF_GROUP[d.field] || "other"}`, title: `alert field: ${afName(d.field)}` },
+            text.slice(d.start, d.end)));
       pos = d.end;
     }
     out.push(text.slice(pos));
@@ -273,11 +302,19 @@
         selectTab("text"); $("text").focus();
       } }, "Copy into the text box to edit")) : null);
 
+    const spans = r.alert_spans || [];
     const legend = el("div", { class: "legend" }, el("mark", { class: "host" }, "host"),
-      el("mark", { class: "host_instance" }, "HOST\\INSTANCE"), el("mark", { class: "bare_instance" }, "bare instance"));
+      el("mark", { class: "host_instance" }, "HOST\\INSTANCE"), el("mark", { class: "bare_instance" }, "bare instance"),
+      spans.length ? [el("mark", { class: "af af-client" }, "client or database"), el("mark", { class: "af af-env" }, "environment"),
+        el("mark", { class: "af af-type" }, "alert or backup type"), el("mark", { class: "af af-date" }, "date and other alert fields")] : null);
     const textCard = el("section", { class: "card" }, el("h2", {}, "Text"), legend,
-      t.subject ? el("pre", { class: "text" }, el("strong", {}, highlighted(t.subject, dets, "subject"))) : null,
-      el("pre", { class: "text" }, t.description ? highlighted(t.description, dets, "description") : el("span", { class: "stats" }, "No description.")));
+      t.subject ? el("pre", { class: "text" }, el("strong", {}, highlighted(t.subject, dets, "subject", spans))) : null,
+      el("pre", { class: "text" }, t.description ? highlighted(t.description, dets, "description", spans) : el("span", { class: "stats" }, "No description.")));
+    const af = r.alert_fields || {};
+    const afKeys = Object.keys(af).filter(k => k !== "family" && k !== "layout");
+    const fieldsCard = afKeys.length ? el("section", { class: "card" },
+      el("h2", {}, `Alert fields (${af.family || "alert"}${af.layout ? `, ${af.layout} layout` : ""})`),
+      el("dl", { class: "fields" }, afKeys.flatMap(k => [el("dt", {}, afName(k)), el("dd", { class: "mono" }, af[k])]))) : null;
 
     const detRows = dets.map((d, i) => el("tr", { class: "clickable", onclick: () => jumpTo(i), title: "Show in the text" },
       el("td", { class: "mono" }, d.text), el("td", {}, human(d.kind)), el("td", { class: "mono" }, d.host || ""),
@@ -307,7 +344,7 @@
         el("thead", {}, el("tr", {}, ["Token", "Field", "Form", "Eligible as", "P(host)", "P(instance)", "Rule"].map(h => el("th", {}, h)))),
         el("tbody", {}, candRows)))));
 
-    $("results").replaceChildren(summary, textCard, detCard, candCard);
+    $("results").replaceChildren(...[summary, fieldsCard, textCard, detCard, candCard].filter(Boolean));
   }
 
   // --- Labeling ----------------------------------------------------------------

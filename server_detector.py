@@ -212,7 +212,10 @@ def ticket_names(ticket: dict) -> list[ParsedName]:
     values = list(ticket.get("dw_servers") or [])
     alert = ticket.get("alert_fields") or {}
     values += [alert[k] for k in ("server", "instance", "db_instance") if alert.get(k)]
-    return [p for p in (normalize_reference(v) for v in values) if p]
+    # "Host(s):" lists, and the backup report's "latest backup server" column
+    values += re.split(r"[,;\s]+", f"{alert.get('hosts') or ''} {alert.get('backup_servers') or ''}")
+    names = [p for p in (normalize_reference(v) for v in values if v) if p]
+    return list(dict.fromkeys(names))
 
 
 # --- Known-names directory -----------------------------------------------------
@@ -620,6 +623,9 @@ def ticket_candidates(ticket: dict, know: Knowledge, *, alert_context: str = "st
     breaks = [m.start() for m in SENTENCE_RE.finditer(text)]
     conn = [m.span(1) for m in CONN_RE.finditer(text)]
     client = know.directory.client_for(ticket)
+    # The servers an alert names in its own parsed fields (Server, Host(s), ServerName and the like)
+    alert_hosts = frozenset(p.host for p in ticket_names({"alert_fields": ticket.get("alert_fields")})) \
+        if alert else frozenset()
     cands = []
     for ti, (raw, s0, _) in enumerate(tokens):
         parts = token_parts(raw, s0)
@@ -634,7 +640,8 @@ def ticket_candidates(ticket: dict, know: Knowledge, *, alert_context: str = "st
             if not c:
                 continue
             c.update(ti=ti, sent=bisect.bisect_left(breaks, s), ctx=" ".join(window))
-            c["rule"] = _rule(c, words, ti, know, client)
+            c["rule"] = "host:alert_field" if c["host_ok"] and c["host"] in alert_hosts else \
+                _rule(c, words, ti, know, client)
             cands.append(c)
     _mark_host_nearby(cands)
     return cands
@@ -1635,7 +1642,10 @@ def parse_args(argv=None):
                              "set, when it exists); pass with no files to keep every ticket")
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser("train", parents=[shared], help="fit on --train and save the model")
+    tr = sub.add_parser("train", parents=[shared], help="fit on --train and save the model")
+    # The validation split's instance labels are derived, so its choice can lose on hand labels.
+    tr.add_argument("--kind", choices=MODEL_KINDS, nargs="+", help="model kinds to try (default: all)")
+    tr.add_argument("--alert-context", choices=ALERT_CONTEXT_MODES, nargs="+", help="alert context modes to try")
     sub.add_parser("evaluate", parents=[shared], help="run all tests and write a report")
     d = sub.add_parser("detect", parents=[shared], help="detect servers in a ticket file")
     d.add_argument("--tickets", type=Path, default=DATA_DIR / "test_tickets.jsonl")
@@ -1661,7 +1671,8 @@ def cmd_train(args) -> None:
     if not train:
         raise SystemExit(f"Missing or empty ticket file: {args.train}")
     print("Selecting the model on a validation split ...")
-    cfg = select_config(train, seed=args.seed, max_chars=args.max_chars, neg_ratio=args.neg_ratio)
+    cfg = select_config(train, seed=args.seed, max_chars=args.max_chars, neg_ratio=args.neg_ratio,
+                        kinds=args.kind or MODEL_KINDS, modes=args.alert_context or ALERT_CONTEXT_MODES)
     directory = LocalServerDirectory.from_sources(train)
     model, counts = fit_config(train, directory, kind=cfg["kind"], alert_context=cfg["alert_context"],
                                instance_model=cfg["instance_model"], seed=args.seed, max_chars=args.max_chars,

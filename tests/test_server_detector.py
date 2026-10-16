@@ -468,3 +468,12 @@ def test_without_labeled_drops_holdout_tickets(tmp_path):
     kept = sd.without_labeled(tickets, [labels, tmp_path / "missing.jsonl"])
     assert [t["ticket_id"] for t in kept] == ["0", "2"]
     assert sd.without_labeled(tickets, []) == tickets
+
+
+def test_table_alert_server_is_detected_everywhere_it_appears():
+    from tests.test_alert_parser import TABLE
+    t = make_ticket("9", "", TABLE)  # pasted without the alert subject: recognised by the table header
+    assert sd.is_alert_ticket(t)
+    d = sd.LocalServerDirectory.from_sources([], None)
+    found = sd.detect_servers(t, d, rules_only_model())
+    assert [(x["text"], x["rule"]) for x in found] == [("Q9ZZPAP07K", "host:alert_field")] * 3
