@@ -121,3 +121,12 @@ def test_page_parses_jsonl_and_json_files():
         assert first[key] == expected[key], key
     assert [t["ticket_id"] for t in parsed[1]["tickets"]] == ["5"]
     assert "load_export.py" in parsed[2]["error"]
+
+
+def test_detected_servers_reach_the_page_and_have_a_card():
+    ticket = {**make_ticket(7, "Slow", r"SQLA01\REPORTS is slow"),
+              "detected_servers": [{"text": r"SQLA01\REPORTS", "kind": "host_instance", "host": "sqla01",
+                                    "instance": "reports", "status": "known", "score": 0.97}]}
+    data = embedded_data(build_html([ticket], {}, source="t.jsonl"))
+    assert data["tickets"][0]["detected_servers"] == ticket["detected_servers"]
+    assert "serversCard(t)" in TEMPLATE_PATH.read_text(encoding="utf-8")

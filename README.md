@@ -61,6 +61,8 @@ the output schema and the hand-labeled results.
     python view_tickets.py --run latest --open        # the same, with a run's results
     python baseline.py                                # non-LLM baseline on the training/test exports
     python split_alerts.py data\train_tickets.csv     # writes train_tickets_alerts.csv and _human.csv
+    python server_detector.py evaluate                # non-LLM server and instance detector (see below)
+    python detector_ui.py --open                      # try the saved detector on pasted text or a Zendesk ticket
 
 Runs are resumable: already classified tickets in a run are skipped. A run
 keeps its model, effort, prompt version and taxonomy version; reusing its name
@@ -179,6 +181,176 @@ scored separately, for example `python baseline.py --train
 data\train_tickets_alerts.jsonl --test data\test_tickets_alerts.jsonl`. CSV
 rows are copied unchanged. Tickets without a readable is_alert value go in
 neither file and are counted.
+
+## Server and instance detector
+
+`server_detector.py` finds SQL Server hosts and named instances in ticket text
+without an LLM, including names it has never seen and instance names written
+on their own ("the REPORTS instance", "MSSQL$REPORTS"). It runs locally and
+sends nothing to any service.
+
+    python server_detector.py evaluate     # all tests on the exports; report to data/reports/
+    python server_detector.py train        # fit and save data/models/server_detector.joblib
+    python server_detector.py detect --tickets data\test_tickets.jsonl            # rows: ticket_id, detected_servers
+    python server_detector.py detect --tickets data\test_tickets.jsonl --write    # a copy of each ticket with detected_servers
+
+Options: --train, --test, --host-threshold, --instance-threshold (default:
+best F1 on a 20% validation split of the training file), --seed,
+--holdout-share (0.2), --max-chars (description characters read, 20,000),
+--neg-ratio ('none' training examples per positive, 10), --model-path, and for
+detect --tickets, --output (default data/<tickets>-servers.jsonl) and --write.
+detect never changes the source file. The viewer shows `detected_servers` in
+its own card (kind, host, instance, status, score) when a ticket has them, so
+`python view_tickets.py --tickets data\test_tickets-servers.jsonl` after
+`detect --write` shows the results.
+
+Each detection is `{text, field, start, end, kind, host, instance, status,
+candidates, typo_of, sibling_of, score, rule, evidence}`. Offsets are into the field
+named by `field` (subject or description). `kind` is `host`, `host_instance`
+(written as HOST\INSTANCE) or `bare_instance`. Statuses:
+
+| Status | Meaning |
+| --- | --- |
+| known | host, or host and instance, in the directory |
+| new_instance_on_known_host | host known, instance not known on it |
+| possible_new_host | host not in the directory, scored as a host (`sibling_of` set when only trailing digits differ from a known host) |
+| possible_new_instance | bare instance not known for the client, host unknown or not paired |
+| ambiguous | bare instance known on several of the client's hosts (`candidates`) |
+| typo_of_known | one edit (a swap counts as one) from a known name with the same pattern; reported as the known name |
+
+How it works:
+
+1. Tokens split on whitespace and punctuation but keep `\ . - _ , : $`, so
+   HOST\INSTANCE, FQDNs, HOST,PORT, tcp:HOST and MSSQL$INSTANCE survive.
+   Connection-string values (Server=, Data Source=, Address=) and UNC hosts
+   are flagged. Host candidates are 3 to 63 characters with a letter, not a
+   stop word (a built-in list plus frequent words in human training tickets,
+   minus known names), date, ticket number, KB article, error code, file name
+   or email part. Instance candidates are 2 to 16 characters and are a known
+   instance name, near an instance cue (instance, service, a backslash,
+   MSSQL$, SQLAgent$), or upper case; the stop list does not apply to them.
+2. Features: character 2-5 grams of the name, shape (case, digits, separators,
+   port, IP), a compressed pattern (`aautdb01` -> `L6 D2`), how many hosts and
+   clients use the token as an instance name at other clients, context words
+   and flags, and the client's naming convention (own prefixes and patterns,
+   similarity to the nearest other own name, matching another client's
+   convention but not its own). Name features are leave-one-out (a known
+   name does not match itself), and for 30% of training tickets the client
+   is hidden, so the model also works for unknown clients and new names.
+3. Labels come from the data, not hand labeling: in alerts, the parsed server
+   or the host of a server-shaped instance is a host; in human tickets, the
+   ticket's dw_servers and the directory's hosts and instance names for its
+   client. Each HOST\INSTANCE mention in training also yields a synthetic
+   bare-instance example with the host removed. 'none' examples are sampled
+   down; no class weights.
+4. Logistic regression on all features and gradient boosting on the dense
+   features are compared on the validation split, along with two ways of
+   handling templated alert text (label words removed from the context, or
+   alerts' context ignored), and a separate binary instance model. The best
+   macro average precision over host and instance is kept.
+5. Rules mark unambiguous wording, and a rule match scores at least 0.95, so
+   it is detected whatever the model says. Instances: `MSSQL$NAME` and
+   `SQLAgent$NAME`, `NAME instance`, `instance NAME`, `instance named NAME`
+   (not filler words such as "the" or "this", and not alert template lines),
+   and a known instance of the ticket's client written in upper case. Hosts:
+   HOST\INSTANCE whose host has a digit, is known or sits in a connection
+   string (so `CORP\jsmith` logins are left to the model); connection-string
+   values; UNC hosts; names with a port or tcp:; a name with a digit after
+   server, host, vm, box, machine or node, or after "instance on"; a known
+   host of the client; and a near known host (one edit with the same
+   pattern, or only trailing digits differ; 5 or more characters with a
+   digit). Each detection's `rule` names the rule, or is null when the model
+   alone found it. The report counts how often each rule fires and agrees with
+   the derived labels.
+6. A bare instance is paired with the nearest host detection in the ticket
+   (same sentence, then within 10 tokens, then anywhere) when the directory has
+   that pair or no instances for that host; otherwise with the client's single
+   host that has it (several are ambiguous); otherwise it stays unpaired.
+
+`evaluate` runs the standard test (train on the training file, score the test
+file), an unseen-host test (20% of hosts removed from the directory and from
+training) and an unseen-instance test (20% of instance names, reported
+separately for names used by one client and names shared across clients),
+plus bare-instance pairing accuracy against the ticket's dw_servers. It
+reports candidate-generation recall, precision, recall, F1 and average
+precision per class for alerts and human tickets, and the most common
+false-positive shapes as compressed patterns, never as text. Profiles and the
+feature directory use training data only; test labels use the test tickets'
+own dw_servers and alert fields.
+
+### Trying the model by hand
+
+    python detector_ui.py --open      # http://127.0.0.1:8765/
+
+`detector_ui.py` serves a page, on 127.0.0.1 by default, for testing the saved model
+(run `server_detector.py train` first). Paste text, optionally pick the client
+whose known names apply, and press Analyze (Ctrl+Enter); or give a Zendesk
+ticket URL or number and press Fetch and analyze, which reads that ticket's
+subject and description (the first comment) and organization with the
+read-only client and the .env credentials. URLs on any other Zendesk
+subdomain are refused, so the API token only goes to the configured one. The
+page highlights each detection in the text, lists kind, host, instance,
+status and score, and shows every candidate with its host and instance
+probabilities. Changing a threshold re-scores the current text without
+fetching it again. Text and tickets stay in memory and on the page; the
+console logs request paths only. Options: --port, --model-path, --train (read
+for client names) and --open.
+
+### Hand labeling by several DBAs
+
+    python detector_ui.py --host 0.0.0.0     # serve the network; DBAs open http://<this machine>:8765/#label
+    python server_labels.py evaluate         # score the saved model against the labels
+
+The page's Label tab hands out a fixed, seeded sample of tickets (200 human
+tickets from data/test_tickets.jsonl by default) for DBAs to mark every host,
+HOST\INSTANCE and bare instance name in. There is no sign-in: each labeler
+types their name, which is recorded with each label and not verified. Each
+ticket gets one label, and an evenly spread 15% get two from different people,
+to measure agreement. A ticket handed out is held for that person for 30
+minutes. Model suggestions show as dashed outlines that count only when
+accepted, and can be hidden for unaided labeling. A ticket saved with nothing
+marked records that it mentions no servers. Secrets in the text are masked
+character for character, so offsets stay exact. Labels are appended to
+data/labels/server_spans.jsonl; the latest row per ticket and labeler counts,
+and labelers can reopen and correct their own tickets.
+
+Serving the network (`--host 0.0.0.0`) shows client ticket text to anyone who
+can reach the machine, so run it only on an internal machine. Zendesk lookups
+are off in that mode unless `--zendesk on` is given, because anyone reaching
+the page could use the token. The server accepts this machine's name and
+addresses as Host headers; add a DNS alias with `--allow-host`. Options:
+--label-tickets, --label-sample, --label-kind (human, alerts, all),
+--label-overlap, --label-seed and --labels-path.
+
+`server_labels.py evaluate` scores the saved model on one label per ticket
+(the first labeler's): precision, recall, and recall split by whether the
+directory already knew the name, which is the measure the derived labels
+cannot give, plus results per rule and for the model, bare-instance pairing
+where a host was typed, and span agreement between labelers on the
+double-labeled tickets. The report goes to data/reports/server-labels-<timestamp>.md.
+
+### Known-names directory
+
+The detector reads known names only through the `ServerDirectory` protocol,
+so the CMDB API can replace the local sources without changing it. Names are
+normalized by `parse_server_name()`; `client_key` is the Zendesk organization
+id, or `name:<organization name>` when there is none; the default instance
+MSSQLSERVER counts as the host alone.
+
+| Method | Returns |
+| --- | --- |
+| hosts(client_key=None) | normalized hosts (all clients when None) |
+| instances(client_key=None) | (host, instance) pairs |
+| instance_names() | instance name -> number of hosts using it |
+| instance_clients() | instance name -> number of clients using it |
+| hosts_with_instance(instance, client_key) | hosts that have the instance |
+| lookup(host, instance, client_key) | {status, hosts}, with the host and instance rules of `match_mention()` |
+| clients() | client keys |
+| client_for(ticket) | the ticket's client key, by organization id, then name |
+
+`LocalServerDirectory` builds it from server-shaped alert fields, dw_servers
+and data/instances.csv when present. `CmdbApiDirectory` is a stub that raises
+NotImplementedError and documents the expected API shape.
 
 ## Labeling
 

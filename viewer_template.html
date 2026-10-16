@@ -314,6 +314,25 @@
       pairs.length ? fields(pairs) : el("div", { class: "stats" }, "No fields are parsed for this alert format."));
   }
 
+  // Hosts and instances found by server_detector.py (detect --write), when the ticket has them.
+  const SERVER_STATUS_TONE = { known: "good", ambiguous: "alert", typo_of_known: "alert", new_instance_on_known_host: "info" };
+  function serversCard(t) {
+    const found = t.detected_servers;
+    if (!Array.isArray(found)) return null;
+    const card = el("div", { class: "card" }, el("h3", {}, "Detected servers"));
+    if (!found.length) return card.append(el("div", { class: "stats" }, "No servers or instances detected.")), card;
+    const rows = found.map(d => el("tr", {},
+      el("td", {}, d.text), el("td", {}, (d.kind || "").replace(/_/g, " ")), el("td", {}, d.host || ""), el("td", {}, d.instance || ""),
+      el("td", {}, chip((d.status || "").replace(/_/g, " "), SERVER_STATUS_TONE[d.status] || null),
+        d.typo_of ? ` of ${d.typo_of}` : "", d.sibling_of ? ` (sibling of ${d.sibling_of})` : "",
+        (d.candidates || []).length ? ` ${d.candidates.join(", ")}` : ""),
+      el("td", {}, d.score != null ? Number(d.score).toFixed(2) : "")));
+    card.append(el("div", { class: "table-wrap" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["Mention", "Kind", "Host", "Instance", "Status", "Score"].map(h => el("th", {}, h)))),
+      el("tbody", {}, rows))));
+    return card;
+  }
+
   function resultCard(t) {
     const r = t.result;
     if (!DATA.run) return null;
@@ -382,6 +401,7 @@
         ["Source", t.source],
       ])),
       alertCard(t),
+      serversCard(t),
       resultCard(t),
       el("div", { class: "card" },
         el("div", { class: "text-bar" },

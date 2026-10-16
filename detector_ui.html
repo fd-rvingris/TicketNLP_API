@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Server Detector</title>
+<!-- Served by detector_ui.py on 127.0.0.1. Holds no ticket data and loads nothing from the network. -->
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --fg: #1c2330; --muted: #5d6879; --line: #dde1e7;
+    --accent: #1f5f8b; --accent-soft: #e3eef6; --alert: #8a5a00; --alert-soft: #fbf0d9;
+    --bad: #a12a2a; --bad-soft: #f8e2e2; --good: #1e6b3a; --good-soft: #def1e4;
+    --host: #d5e8f7; --host-line: #1f5f8b; --pair: #dcd3f3; --pair-line: #5a3fa0; --inst: #fbe3c6; --inst-line: #9a5a00;
+    --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+    --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #13171d; --panel: #1b2028; --fg: #e2e7ee; --muted: #9aa4b3; --line: #2d3541;
+      --accent: #7db6df; --accent-soft: #1f3344; --alert: #f0c060; --alert-soft: #3a2f17;
+      --bad: #f09a9a; --bad-soft: #3d2023; --good: #8fd3a5; --good-soft: #1b3324;
+      --host: #1d3a52; --host-line: #7db6df; --pair: #34295a; --pair-line: #b9a6f0; --inst: #4a3417; --inst-line: #f0b060;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 10px 16px;
+           background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  .meta, .stats { color: var(--muted); font-size: 12px; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 10px; min-width: 0; }
+  .card h2 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+  .tabs button { border: 0; background: none; padding: 6px 12px; border-bottom: 2px solid transparent; cursor: pointer; color: var(--muted); }
+  .tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .row > label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+  input[type=text], input[type=url], input[type=number], select, textarea {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; }
+  input[type=number] { width: 80px; }
+  textarea { width: 100%; min-height: 180px; resize: vertical; font-family: var(--mono); font-size: 13px; }
+  .grow { flex: 1 1 280px; }
+  .grow input, .grow select { width: 100%; }
+  button.primary { background: var(--accent); color: var(--panel); border: 0; border-radius: 4px; padding: 7px 16px; font-weight: 600; cursor: pointer; }
+  button.primary:disabled { opacity: 0.6; cursor: progress; }
+  button.plain { background: none; border: 1px solid var(--line); border-radius: 4px; padding: 5px 10px; cursor: pointer; }
+  .error { color: var(--bad); background: var(--bad-soft); border-radius: 4px; padding: 6px 10px; }
+  .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+  .chip { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; background: var(--accent-soft); color: var(--fg); white-space: nowrap; }
+  .chip.good { background: var(--good-soft); color: var(--good); }
+  .chip.alert { background: var(--alert-soft); color: var(--alert); }
+  .chip.bad { background: var(--bad-soft); color: var(--bad); }
+  .chip.info { background: var(--accent-soft); color: var(--accent); }
+  pre.text { margin: 0; white-space: pre-wrap; word-break: break-word; font: 13px/1.55 var(--mono); max-height: 520px; overflow: auto; }
+  mark { color: inherit; border-radius: 2px; padding: 0 1px; border-bottom: 2px solid; cursor: help; }
+  mark.host { background: var(--host); border-color: var(--host-line); }
+  mark.host_instance { background: var(--pair); border-color: var(--pair-line); }
+  mark.bare_instance { background: var(--inst); border-color: var(--inst-line); }
+  mark.flash { outline: 2px solid var(--accent); }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .legend mark { cursor: default; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  td.mono { font-family: var(--mono); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover { background: var(--accent-soft); }
+  .bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--accent); vertical-align: middle; margin-left: 6px; }
+  .bar.inst { background: var(--inst-line); }
+  .over { font-weight: 600; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+  .fields { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; font-size: 13px; }
+  .fields dt { color: var(--muted); }
+  .fields dd { margin: 0; }
+  .kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+  /* Labeling */
+  mark.suggest { background: transparent; border: 1px dashed; border-bottom-width: 1px; cursor: pointer; }
+  mark.span { cursor: pointer; }
+  mark.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .label-text pre { cursor: text; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .toolbar button { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+  .toolbar button:hover { border-color: var(--accent); }
+  tr.sel td { background: var(--accent-soft); }
+  .help { font-size: 13px; }
+  .help ul { margin: 6px 0; padding-left: 20px; }
+  .progress { font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Server Detector</h1>
+  <span class="meta" id="model-meta">Loading model…</span>
+</header>
+<main>
+  <section class="card" aria-label="Input">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tab-text" aria-selected="true" aria-controls="panel-text">Paste text</button>
+      <button type="button" role="tab" id="tab-zendesk" aria-selected="false" aria-controls="panel-zendesk">Zendesk ticket</button>
+      <button type="button" role="tab" id="tab-label" aria-selected="false" aria-controls="panel-label" hidden>Label tickets</button>
+    </div>
+    <div id="panel-text" role="tabpanel" aria-labelledby="tab-text" style="display:grid; gap:8px">
+      <div class="row">
+        <label class="grow">Client (decides which known names apply)<select id="client"></select></label>
+        <label class="grow">Subject (optional)<input type="text" id="subject" placeholder="e.g. REPORTS instance slow"></label>
+      </div>
+      <textarea id="text" placeholder="Paste ticket text here. Example: The REPORTS instance on SQLPRD01 is not responding; Data Source=sqlprd02\SALES,1433"></textarea>
+      <div class="row">
+        <button type="button" class="primary" id="analyze">Analyze</button>
+        <span class="meta"><span class="kbd">Ctrl</span>+<span class="kbd">Enter</span> to analyze</span>
+      </div>
+    </div>
+    <div id="panel-zendesk" role="tabpanel" aria-labelledby="tab-zendesk" hidden style="display:none; gap:8px">
+      <div class="row">
+        <label class="grow">Zendesk ticket URL or number<input type="url" id="zd-url" placeholder="https://<subdomain>.zendesk.com/agent/tickets/12345"></label>
+        <button type="button" class="primary" id="fetch" style="align-self:end">Fetch and analyze</button>
+      </div>
+      <div class="meta" id="zd-note"></div>
+    </div>
+    <div id="panel-label" role="tabpanel" aria-labelledby="tab-label" hidden style="display:none; gap:8px">
+      <div class="row">
+        <label class="grow">Your name (recorded with each label)<input type="text" id="labeler-name" maxlength="60" autocomplete="name" placeholder="First and last name"></label>
+        <button type="button" class="primary" id="label-start" style="align-self:end">Start labeling</button>
+        <label class="grow">Go back to a ticket you labeled<select id="label-mine"><option value="">Your labeled tickets</option></select></label>
+      </div>
+      <div class="progress meta" id="label-progress"></div>
+      <div class="error" id="label-error" role="alert" hidden></div>
+    </div>
+    <div class="row" id="th-row">
+      <label>Host threshold<input type="number" id="th-host" min="0" max="1" step="0.05"></label>
+      <label>Instance threshold<input type="number" id="th-inst" min="0" max="1" step="0.05"></label>
+      <button type="button" class="plain" id="th-reset" style="align-self:end">Model defaults</button>
+      <span class="meta" style="align-self:end">Changing a threshold re-scores the current text.</span>
+    </div>
+    <div class="error" id="error" role="alert" hidden></div>
+  </section>
+  <div id="results" aria-live="polite"></div>
+  <div id="label-view" hidden></div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  let INFO = null, LAST = null, busy = false;
+
+  function el(tag, attrs, ...children) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === null || v === undefined || v === false) continue;
+      if (k === "class") node.className = v; else if (k.startsWith("on")) node.addEventListener(k.slice(2), v); else node.setAttribute(k, v);
+    }
+    for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) node.append(c instanceof Node ? c : String(c));
+    return node;
+  }
+  const chip = (text, cls) => el("span", { class: "chip" + (cls ? " " + cls : "") }, text);
+  const pct = x => (x * 100).toFixed(1) + "%";
+  const human = s => String(s || "").replace(/_/g, " ");
+  const STATUS_TONE = { known: "good", new_instance_on_known_host: "info", ambiguous: "alert", typo_of_known: "alert",
+                        possible_new_host: "bad", possible_new_instance: "bad" };
+  const STATUS_HELP = {
+    known: "In the known-names directory for this client",
+    new_instance_on_known_host: "Host is known; this instance is not known on it",
+    possible_new_host: "Not in the directory, but scored as a host",
+    possible_new_instance: "Bare instance not known for the client, and no host paired",
+    ambiguous: "Instance known on several of the client's hosts",
+    typo_of_known: "One edit from a known name with the same pattern; shown as the known name",
+  };
+
+  // Rule names from server_detector._rule, in words. A rule match scores at least 0.95.
+  const RULE_TEXT = {
+    "instance:service_suffix": "rule: MSSQL$/SQLAgent$ service name", "instance:name_before_instance": "rule: <name> instance",
+    "instance:name_after_instance": "rule: instance <name>", "instance:known_name": "rule: client's known instance",
+    "host:known_name": "rule: client's known host", "host:near_known_name": "rule: close to a known host",
+    "host:host_instance": "rule: HOST\\INSTANCE", "host:connection_string": "rule: connection string",
+    "host:unc_path": "rule: UNC path", "host:port": "rule: name with port", "host:after_server_word": "rule: after server/host/instance on",
+  };
+  const ruleLabel = r => RULE_TEXT[r] || r;
+
+  function setError(msg) { $("error").textContent = msg || ""; $("error").hidden = !msg; }
+
+  async function post(path, body) {
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    return data;
+  }
+
+  function thresholds() {
+    const h = parseFloat($("th-host").value), i = parseFloat($("th-inst").value);
+    return { host_threshold: isNaN(h) ? null : h, instance_threshold: isNaN(i) ? null : i };
+  }
+
+  async function run(path, body, button) {
+    if (busy) return;
+    busy = true; button.disabled = true; setError("");
+    const label = button.textContent; button.textContent = "Working…";
+    try {
+      const result = await post(path, { ...body, ...thresholds() });
+      // Later threshold changes re-score this text locally on the server, without fetching Zendesk again.
+      LAST = { subject: result.ticket.subject || "", text: result.ticket.description || "", client: result.client.key || "" };
+      render(result);
+    } catch (e) { setError(e.message); }
+    finally { busy = false; button.disabled = false; button.textContent = label; }
+  }
+
+  function analyzeText() {
+    run("/api/analyze", { subject: $("subject").value, text: $("text").value, client: $("client").value }, $("analyze"));
+  }
+  function fetchZendesk() { run("/api/zendesk", { url: $("zd-url").value }, $("fetch")); }
+  function rescore() { if (LAST && !busy) run("/api/analyze", LAST, $("analyze")); }
+
+  // --- Rendering -------------------------------------------------------------
+
+  function highlighted(text, dets, field) {
+    const spans = dets.map((d, i) => ({ ...d, i })).filter(d => d.field === field).sort((a, b) => a.start - b.start);
+    const out = []; let pos = 0;
+    for (const d of spans) {
+      if (d.start < pos) continue; // overlapping detections keep the first
+      out.push(text.slice(pos, d.start));
+      out.push(el("mark", { class: d.kind, id: `det-${d.i}`,
+        title: `${human(d.kind)} · ${human(d.status)} · score ${d.score.toFixed(2)}` +
+               (d.host ? ` · host ${d.host}` : "") + (d.instance ? ` · instance ${d.instance}` : "") }, text.slice(d.start, d.end)));
+      pos = d.end;
+    }
+    out.push(text.slice(pos));
+    return out;
+  }
+
+  function jumpTo(i) {
+    const m = $(`det-${i}`);
+    if (!m) return;
+    m.scrollIntoView({ block: "center", behavior: "smooth" });
+    m.classList.add("flash"); setTimeout(() => m.classList.remove("flash"), 1200);
+  }
+
+  function statusCell(d) {
+    const extra = [];
+    if (d.typo_of) extra.push(` of ${d.typo_of}`);
+    if (d.sibling_of) extra.push(` (sibling of ${d.sibling_of})`);
+    if ((d.candidates || []).length) extra.push(` ${d.candidates.join(", ")}`);
+    return el("td", {}, el("span", { title: STATUS_HELP[d.status] || "" }, chip(human(d.status), STATUS_TONE[d.status])), extra.join(""));
+  }
+
+  function render(r) {
+    const dets = r.detections, t = r.ticket;
+    const byStatus = {};
+    dets.forEach(d => { byStatus[d.status] = (byStatus[d.status] || 0) + 1; });
+    const client = r.client.key
+      ? `${r.client.name || r.client.key}` + (r.client.in_directory ? ` (${r.client.hosts} known hosts, ${r.client.instances} known instances)` : " (not in the directory)")
+      : "none selected";
+    const summary = el("section", { class: "card" }, el("h2", {}, "Result"),
+      el("dl", { class: "fields" },
+        t.source === "zendesk_api" ? [el("dt", {}, "Ticket"), el("dd", {}, `#${t.ticket_id}` + (t.created_at ? ` · ${t.created_at}` : ""))] : null,
+        el("dt", {}, "Client"), el("dd", {}, client),
+        el("dt", {}, "Read as"), el("dd", {}, r.is_alert ? chip("alert", "alert") : chip("human ticket")),
+        el("dt", {}, "Thresholds"), el("dd", {}, `host ${r.thresholds.host.toFixed(2)} · instance ${r.thresholds.instance.toFixed(2)}`),
+        el("dt", {}, "Detections"), el("dd", {}, dets.length
+          ? el("span", { class: "chips" }, Object.entries(byStatus).map(([s, n]) => chip(`${n} ${human(s)}`, STATUS_TONE[s])))
+          : "none above the thresholds")),
+      (t.description || "").length > r.max_chars
+        ? el("div", { class: "stats" }, `Only the first ${r.max_chars.toLocaleString()} description characters are read, as in training.`) : null,
+      t.source === "zendesk_api" ? el("div", {}, el("button", { type: "button", class: "plain", onclick: () => {
+        $("subject").value = t.subject || ""; $("text").value = t.description || "";
+        if ([...$("client").options].some(o => o.value === (r.client.key || ""))) $("client").value = r.client.key || "";
+        selectTab("text"); $("text").focus();
+      } }, "Copy into the text box to edit")) : null);
+
+    const legend = el("div", { class: "legend" }, el("mark", { class: "host" }, "host"),
+      el("mark", { class: "host_instance" }, "HOST\\INSTANCE"), el("mark", { class: "bare_instance" }, "bare instance"));
+    const textCard = el("section", { class: "card" }, el("h2", {}, "Text"), legend,
+      t.subject ? el("pre", { class: "text" }, el("strong", {}, highlighted(t.subject, dets, "subject"))) : null,
+      el("pre", { class: "text" }, t.description ? highlighted(t.description, dets, "description") : el("span", { class: "stats" }, "No description.")));
+
+    const detRows = dets.map((d, i) => el("tr", { class: "clickable", onclick: () => jumpTo(i), title: "Show in the text" },
+      el("td", { class: "mono" }, d.text), el("td", {}, human(d.kind)), el("td", { class: "mono" }, d.host || ""),
+      el("td", { class: "mono" }, d.instance || ""), statusCell(d), el("td", { class: "num" }, d.score.toFixed(2)),
+      el("td", {}, d.rule ? chip(ruleLabel(d.rule), "info") : chip("model")),
+      el("td", { class: "stats" }, d.evidence)));
+    const detCard = el("section", { class: "card" }, el("h2", {}, `Detections (${dets.length})`),
+      dets.length ? el("div", { class: "table-wrap" }, el("table", {},
+        el("thead", {}, el("tr", {}, ["Mention", "Kind", "Host", "Instance", "Status", "Score", "Why", "Evidence"].map(h => el("th", {}, h)))),
+        el("tbody", {}, detRows)))
+      : el("div", { class: "stats" }, "Nothing scored above the thresholds. The candidate table below shows every score."));
+
+    const th = r.thresholds;
+    const candRows = r.candidates.map(c => {
+      const hOver = c.p_host >= th.host, iOver = c.p_instance >= th.instance;
+      return el("tr", {},
+        el("td", { class: "mono" }, c.text), el("td", {}, c.field), el("td", {}, human(c.kind)),
+        el("td", {}, [c.host_candidate ? "host" : "", c.instance_candidate ? "instance" : ""].filter(Boolean).join(", ")),
+        el("td", { class: "num" + (hOver ? " over" : "") }, pct(c.p_host), el("span", { class: "bar", style: `width:${Math.round(c.p_host * 60)}px` })),
+        el("td", { class: "num" + (iOver ? " over" : "") }, pct(c.p_instance), el("span", { class: "bar inst", style: `width:${Math.round(c.p_instance * 60)}px` })),
+        el("td", {}, c.rule ? ruleLabel(c.rule) : ""));
+    });
+    const candCard = el("section", { class: "card" }, el("details", {},
+      el("summary", {}, `All candidates (${r.candidates.length}), highest score first`),
+      el("p", { class: "stats" }, "Every token the candidate rules kept, with the model's probabilities. Bold values are at or above the threshold. A class the token is not eligible for scores 0. A rule match scores at least 0.95."),
+      el("div", { class: "table-wrap" }, el("table", {},
+        el("thead", {}, el("tr", {}, ["Token", "Field", "Form", "Eligible as", "P(host)", "P(instance)", "Rule"].map(h => el("th", {}, h)))),
+        el("tbody", {}, candRows)))));
+
+    $("results").replaceChildren(summary, textCard, detCard, candCard);
+  }
+
+  // --- Labeling ----------------------------------------------------------------
+  // Labels are saved by server_labels.py. Offsets are into the text as shown, which masks secrets
+  // character for character, so they are also offsets into the original ticket text.
+
+  const LABEL = { name: "", ticket: null, spans: [], selected: -1, showSuggest: true, notes: "", busy: false };
+  const KIND_TEXT = { host: "host", host_instance: "HOST\\INSTANCE", bare_instance: "bare instance" };
+  const KIND_KEY = { h: "host", p: "host_instance", i: "bare_instance" };
+  // Characters a click or selection is widened to, per kind: a host stops at a backslash, comma or $,
+  // so clicking SQL01 inside SQL01\REPORTS marks the host alone.
+  const SNAP = { host: /[A-Za-z0-9_.\-#]/, host_instance: /[A-Za-z0-9_.\-#\\]/, bare_instance: /[A-Za-z0-9_\-#]/ };
+
+  function storedName() { try { return localStorage.getItem("labeler") || ""; } catch { return ""; } }
+  function storeName(n) { try { localStorage.setItem("labeler", n); } catch { /* private window: name is kept for this page only */ } }
+  function labelError(msg) { $("label-error").textContent = msg || ""; $("label-error").hidden = !msg; }
+
+  async function labelCall(path, body) {
+    if (LABEL.busy) return null;
+    LABEL.busy = true; labelError("");
+    try { return await post(path, { labeler: LABEL.name, ...body }); }
+    catch (e) { labelError(e.message); return null; }
+    finally { LABEL.busy = false; }
+  }
+
+  function showProgress(p) {
+    if (!p) return;
+    $("label-progress").textContent = `${LABEL.name}: ${p.mine} ticket${p.mine === 1 ? "" : "s"} · team: ${p.labels_done} of ${p.labels_needed} labels, ` +
+      `${p.tickets_complete} of ${p.sample} tickets complete · ${p.labelers.length} labeler${p.labelers.length === 1 ? "" : "s"}`;
+  }
+
+  async function refreshMine() {
+    const r = await post("/api/label/mine", { labeler: LABEL.name }).catch(() => null);
+    if (!r) return;
+    showProgress(r.progress);
+    $("label-mine").replaceChildren(el("option", { value: "" }, r.tickets.length ? "Your labeled tickets" : "No labeled tickets yet"),
+      ...r.tickets.map(t => el("option", { value: t.ticket_id },
+        `#${t.ticket_id} · ${t.status === "skipped" ? "skipped" : t.spans ? `${t.spans} span${t.spans === 1 ? "" : "s"}` : "no servers"}`)));
+  }
+
+  async function startLabeling() {
+    const name = $("labeler-name").value.replace(/\s+/g, " ").trim();
+    if (!/\w/.test(name)) { labelError("Enter your name first"); $("labeler-name").focus(); return; }
+    LABEL.name = name; storeName(name);
+    await refreshMine();
+    const r = await labelCall("/api/label/next", {});
+    if (r) showLabelTicket(r);
+  }
+
+  async function labelOpen(id) { const r = await labelCall("/api/label/open", { ticket_id: id }); if (r) showLabelTicket(r); }
+
+  function showLabelTicket(r) {
+    showProgress(r.progress);
+    $("label-view").hidden = false;
+    if (r.done) {
+      LABEL.ticket = null;
+      $("label-view").replaceChildren(el("section", { class: "card" }, el("h2", {}, "All done"),
+        el("p", {}, "Every ticket in the sample has the labels it needs, or you have already labeled the rest. Thank you."),
+        el("p", { class: "stats" }, "You can still go back to tickets you labeled with the list above.")));
+      return;
+    }
+    LABEL.ticket = r;
+    LABEL.spans = r.saved ? r.saved.spans.map(s => ({ ...s, host: s.kind === "bare_instance" ? (s.host || "") : s.host })) : [];
+    LABEL.notes = r.saved ? r.saved.notes || "" : "";
+    LABEL.selected = -1;
+    renderLabel();
+    window.scrollTo({ top: 0 });
+  }
+
+  function overlaps(a, b) { return a.field === b.field && a.start < b.end && b.start < a.end; }
+
+  function labelSegments(text, field) {
+    const t = LABEL.ticket;
+    const items = LABEL.spans.map((s, i) => ({ ...s, idx: i, suggest: false })).filter(s => s.field === field);
+    if (LABEL.showSuggest) {
+      t.suggestions.forEach((s, i) => {
+        if (s.field === field && !LABEL.spans.some(x => overlaps(x, s))) items.push({ ...s, idx: i, suggest: true });
+      });
+    }
+    items.sort((a, b) => a.start - b.start);
+    const out = []; let pos = 0;
+    for (const s of items) {
+      if (s.start < pos) continue;
+      out.push(text.slice(pos, s.start));
+      const cls = `${s.kind} ${s.suggest ? "suggest" : "span"}${!s.suggest && s.idx === LABEL.selected ? " sel" : ""}`;
+      out.push(el("mark", { class: cls, [s.suggest ? "data-sugg" : "data-span"]: String(s.idx),
+        title: s.suggest ? `Model suggestion: ${KIND_TEXT[s.kind]} (${s.rule ? ruleLabel(s.rule) : "model, score " + s.score.toFixed(2)}). Click to accept.`
+                         : `${KIND_TEXT[s.kind]}. Click to select; then h, p or i changes the kind, x removes it.` }, text.slice(s.start, s.end)));
+      pos = s.end;
+    }
+    out.push(text.slice(pos));
+    return out;
+  }
+
+  function offsetIn(pre, node, offset) {
+    const r = document.createRange();
+    r.selectNodeContents(pre);
+    r.setEnd(node, offset);
+    return r.toString().length;
+  }
+
+  // The span the current selection (or click position) covers, widened to whole words for the kind.
+  function selectionSpan(kind) {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    const pre = (range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement)?.closest("pre[data-field]");
+    if (!pre || !pre.contains(range.endContainer)) return null;
+    const field = pre.dataset.field, text = LABEL.ticket[field];
+    let start = offsetIn(pre, range.startContainer, range.startOffset), end = offsetIn(pre, range.endContainer, range.endOffset);
+    const re = SNAP[kind];
+    while (start > 0 && re.test(text[start - 1])) start--;
+    while (end < text.length && re.test(text[end])) end++;
+    while (start < end && /[.\-_\\]/.test(text[start])) start++;
+    while (end > start && /[.\-_\\]/.test(text[end - 1])) end--;
+    if (end <= start) return null;
+    return { field, start, end, text: text.slice(start, end) };
+  }
+
+  function markAs(kind) {
+    const sp = selectionSpan(kind);
+    if (!sp) {
+      if (LABEL.selected >= 0) { LABEL.spans[LABEL.selected].kind = kind; renderLabel(); return; }
+      labelError("Select a name in the text, or click on it, then choose its kind.");
+      return;
+    }
+    if (kind === "host_instance" && !sp.text.includes("\\")) {
+      labelError(`"${sp.text}" has no backslash. Select the whole HOST\\INSTANCE, or mark it as a host or a bare instance.`);
+      return;
+    }
+    labelError("");
+    LABEL.spans = LABEL.spans.filter(s => !overlaps(s, sp));
+    LABEL.spans.push({ ...sp, kind, host: "" });
+    LABEL.spans.sort((a, b) => (a.field === b.field ? a.start - b.start : a.field === "subject" ? -1 : 1));
+    LABEL.selected = LABEL.spans.findIndex(s => s.field === sp.field && s.start === sp.start);
+    window.getSelection().removeAllRanges();
+    renderLabel();
+  }
+
+  function removeSelected() {
+    if (LABEL.selected < 0) return;
+    LABEL.spans.splice(LABEL.selected, 1);
+    LABEL.selected = -1;
+    renderLabel();
+  }
+
+  function acceptSuggestion(i) {
+    const s = LABEL.ticket.suggestions[i];
+    if (LABEL.spans.some(x => overlaps(x, s))) return;
+    LABEL.spans.push({ field: s.field, start: s.start, end: s.end, text: s.text, kind: s.kind,
+                       host: s.kind === "bare_instance" ? (s.host || "") : "" });
+    LABEL.spans.sort((a, b) => (a.field === b.field ? a.start - b.start : a.field === "subject" ? -1 : 1));
+    renderLabel();
+  }
+  function acceptAll() { LABEL.ticket.suggestions.forEach((_, i) => acceptSuggestion(i)); }
+
+  async function saveLabel(status) {
+    const t = LABEL.ticket;
+    if (!t) return;
+    const spans = LABEL.spans.map(s => ({ field: s.field, start: s.start, end: s.end, kind: s.kind,
+                                          host: s.kind === "bare_instance" ? (s.host || "") : null }));
+    const r = await labelCall("/api/label/save", { ticket_id: t.ticket_id, status, spans, notes: LABEL.notes });
+    if (!r) return;
+    refreshMine();
+    const next = await labelCall("/api/label/next", {});
+    if (next) showLabelTicket(next);
+  }
+
+  function renderLabel() {
+    const t = LABEL.ticket;
+    const pending = t.suggestions.filter(s => !LABEL.spans.some(x => overlaps(x, s))).length;
+    const header = el("section", { class: "card" },
+      el("h2", {}, `Ticket #${t.ticket_id}`),
+      el("dl", { class: "fields" },
+        el("dt", {}, "Client"), el("dd", {}, t.client || "unknown"),
+        t.created_at ? [el("dt", {}, "Created"), el("dd", {}, t.created_at)] : null,
+        el("dt", {}, "Status"), el("dd", {}, t.saved ? chip(`you saved this: ${t.saved.status === "skipped" ? "skipped" : `${t.saved.spans.length} span(s)`}`, "good") : chip("not labeled by you yet")),
+        t.double ? [el("dt", {}, "Note"), el("dd", {}, "Two people label this ticket, to check that labelers agree. Label it on your own judgment.")] : null,
+        t.masked ? [el("dt", {}, "Masked"), el("dd", {}, `${t.masked} secret(s) shown as dots`)] : null),
+      t.truncated ? el("div", { class: "stats" }, `Only the first ${t.max_chars.toLocaleString()} description characters are shown; label only those.`) : null,
+      el("details", { class: "help" }, el("summary", {}, "How to label"),
+        el("ul", {},
+          el("li", {}, "Mark every place a SQL Server host or instance name appears, each time it appears, in the subject and the description."),
+          el("li", {}, el("strong", {}, "Host (h): "), "a server name on its own, including an FQDN (db01.corp.local), an IP address used as a server, or the host part of host,1433."),
+          el("li", {}, el("strong", {}, "HOST\\INSTANCE (p): "), "a host and named instance written together with a backslash. Mark the whole thing."),
+          el("li", {}, el("strong", {}, "Bare instance (i): "), "a named instance written without its host, such as \"the REPORTS instance\" or MSSQL$REPORTS (mark REPORTS). If you know which host it runs on, type it in the table."),
+          el("li", {}, el("strong", {}, "Do not mark: "), "database names, logins such as CORP\\jsmith, file paths, website URLs, job names, or the word \"instance\" itself."),
+          el("li", {}, "To mark: select the name, or just click on it, then press h, p or i (or use the buttons). Click a mark to select it; x removes it."),
+          el("li", {}, "Dashed outlines are the model's suggestions. They count only if you accept them: click one, or Accept all (a). Hide them (g) if you prefer to label unaided."),
+          el("li", {}, "Enter saves and moves on. A ticket with no servers is a useful label: just save it with nothing marked. Skip only tickets you cannot judge."))));
+
+    const toolbar = el("div", { class: "toolbar" },
+      el("button", { type: "button", onclick: () => markAs("host") }, "Host (h)"),
+      el("button", { type: "button", onclick: () => markAs("host_instance") }, "HOST\\INSTANCE (p)"),
+      el("button", { type: "button", onclick: () => markAs("bare_instance") }, "Bare instance (i)"),
+      el("button", { type: "button", onclick: removeSelected, disabled: LABEL.selected < 0 }, "Remove (x)"),
+      el("span", { class: "meta" }, "|"),
+      el("button", { type: "button", onclick: acceptAll, disabled: !LABEL.showSuggest || !pending }, `Accept all suggestions (a)${pending ? ` · ${pending}` : ""}`),
+      el("button", { type: "button", onclick: () => { LABEL.showSuggest = !LABEL.showSuggest; renderLabel(); } },
+        LABEL.showSuggest ? "Hide suggestions (g)" : "Show suggestions (g)"));
+    const legend = el("div", { class: "legend" }, el("mark", { class: "host" }, "host"),
+      el("mark", { class: "host_instance" }, "HOST\\INSTANCE"), el("mark", { class: "bare_instance" }, "bare instance"),
+      el("mark", { class: "host suggest" }, "suggestion"));
+    const textCard = el("section", { class: "card label-text" }, toolbar, legend,
+      el("pre", { class: "text", "data-field": "subject" }, el("strong", {}, labelSegments(t.subject || "", "subject"))),
+      el("pre", { class: "text", "data-field": "description" }, labelSegments(t.description || "", "description")));
+    textCard.addEventListener("click", e => {
+      const m = e.target.closest("mark");
+      if (!m) return;
+      if (m.dataset.sugg !== undefined) { acceptSuggestion(Number(m.dataset.sugg)); return; }
+      if (m.dataset.span !== undefined && window.getSelection().isCollapsed) {
+        LABEL.selected = Number(m.dataset.span) === LABEL.selected ? -1 : Number(m.dataset.span);
+        renderLabel();
+      }
+    });
+
+    const rows = LABEL.spans.map((s, i) => {
+      const kindSel = el("select", { "aria-label": "Kind" }, Object.entries(KIND_TEXT).map(([k, v]) => el("option", { value: k }, v)));
+      kindSel.value = s.kind;
+      kindSel.addEventListener("change", () => { s.kind = kindSel.value; renderLabel(); });
+      const hostIn = s.kind === "bare_instance"
+        ? el("input", { type: "text", value: s.host || "", placeholder: "host it runs on (optional)", "aria-label": "Host" }) : null;
+      if (hostIn) hostIn.addEventListener("input", () => { s.host = hostIn.value; });
+      return el("tr", { class: i === LABEL.selected ? "sel" : "" },
+        el("td", { class: "mono" }, s.text), el("td", {}, s.field), el("td", {}, kindSel), el("td", {}, hostIn || ""),
+        el("td", {}, el("button", { type: "button", class: "plain", onclick: () => { LABEL.spans.splice(i, 1); LABEL.selected = -1; renderLabel(); } }, "Remove")));
+    });
+    const notes = el("textarea", { rows: "2", placeholder: "Notes (optional): anything unclear about this ticket", style: "min-height:auto; font-family:var(--sans)" });
+    notes.value = LABEL.notes;
+    notes.addEventListener("input", () => { LABEL.notes = notes.value; });
+    const n = LABEL.spans.length;
+    const spanCard = el("section", { class: "card" }, el("h2", {}, `Your marks (${n})`),
+      n ? el("div", { class: "table-wrap" }, el("table", {},
+            el("thead", {}, el("tr", {}, ["Text", "Field", "Kind", "Host (bare instances)", ""].map(h => el("th", {}, h)))),
+            el("tbody", {}, rows)))
+        : el("div", { class: "stats" }, "Nothing marked. Saving now records that this ticket mentions no servers."),
+      notes,
+      el("div", { class: "row" },
+        el("button", { type: "button", class: "primary", onclick: () => saveLabel("done") }, n ? "Save and next (Enter)" : "Save: no servers, and next (Enter)"),
+        el("button", { type: "button", class: "plain", onclick: () => saveLabel("skipped") }, "Skip, I can't judge this ticket")));
+    $("label-view").replaceChildren(header, textCard, spanCard);
+  }
+
+  function labelKeys(e) {
+    if (!LABEL.ticket || $("label-view").hidden) return;
+    if (e.target.closest("input, textarea, select") || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (KIND_KEY[k]) { e.preventDefault(); markAs(KIND_KEY[k]); }
+    else if (k === "x" || k === "delete") { e.preventDefault(); removeSelected(); }
+    else if (k === "a") { e.preventDefault(); if (LABEL.showSuggest) acceptAll(); }
+    else if (k === "g") { e.preventDefault(); LABEL.showSuggest = !LABEL.showSuggest; renderLabel(); }
+    else if (k === "enter" && !e.target.closest("button")) { e.preventDefault(); saveLabel("done"); }
+  }
+
+  // --- Setup ---------------------------------------------------------------------
+
+  function selectTab(which) {
+    for (const name of ["text", "zendesk", "label"]) {
+      const on = name === which;
+      $(`tab-${name}`).setAttribute("aria-selected", String(on));
+      $(`panel-${name}`).hidden = !on;
+      $(`panel-${name}`).style.display = on ? "grid" : "none";
+    }
+    const labeling = which === "label";
+    $("th-row").hidden = labeling;
+    $("results").hidden = labeling;
+    $("label-view").hidden = !labeling || !LABEL.ticket;
+    if (labeling && !LABEL.name && $("labeler-name").value) startLabeling();
+  }
+
+  function resetThresholds() {
+    if (!INFO) return;
+    $("th-host").value = INFO.thresholds.host.toFixed(2);
+    $("th-inst").value = INFO.thresholds.instance.toFixed(2);
+  }
+
+  async function init() {
+    $("tab-text").addEventListener("click", () => selectTab("text"));
+    $("tab-zendesk").addEventListener("click", () => selectTab("zendesk"));
+    $("tab-label").addEventListener("click", () => selectTab("label"));
+    $("label-start").addEventListener("click", startLabeling);
+    $("labeler-name").addEventListener("keydown", e => { if (e.key === "Enter") startLabeling(); });
+    $("label-mine").addEventListener("change", e => { if (e.target.value) labelOpen(e.target.value); e.target.value = ""; });
+    document.addEventListener("keydown", labelKeys);
+    $("labeler-name").value = storedName();
+    $("analyze").addEventListener("click", analyzeText);
+    $("fetch").addEventListener("click", fetchZendesk);
+    $("zd-url").addEventListener("keydown", e => { if (e.key === "Enter") fetchZendesk(); });
+    $("text").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) analyzeText(); });
+    $("th-reset").addEventListener("click", () => { resetThresholds(); rescore(); });
+    for (const id of ["th-host", "th-inst"]) $(id).addEventListener("change", rescore);
+    try {
+      INFO = await (await fetch("/api/info")).json();
+    } catch (e) { setError("Could not reach detector_ui.py. Is it still running?"); return; }
+    const m = INFO.model, d = INFO.directory;
+    $("model-meta").textContent = `Model ${m.kind}, trained on ${m.trained_on} (${m.created_at}) · directory ${d.clients} clients, ${d.hosts.toLocaleString()} hosts, ${d.pairs} instance pairs`;
+    $("client").replaceChildren(el("option", { value: "" }, "No client (generic names only)"),
+      ...INFO.clients.map(c => el("option", { value: c.key }, `${c.name} (${c.hosts} hosts)`)));
+    resetThresholds();
+    $("zd-note").textContent = INFO.zendesk
+      ? `Reads the ticket from ${INFO.zendesk}.zendesk.com with GET requests only, and analyzes its subject and description (the first comment). The ticket's organization selects the client.`
+      : "Zendesk is not configured. Set ZENDESK_SUBDOMAIN, ZENDESK_EMAIL and ZENDESK_API_TOKEN in .env and restart detector_ui.py.";
+    $("fetch").disabled = !INFO.zendesk;
+    if (INFO.labeling) {
+      $("tab-label").hidden = false;
+      $("tab-label").textContent = `Label tickets (${INFO.labeling.sample})`;
+      if (location.hash === "#label") selectTab("label");
+    }
+  }
+  init();
+})();
+</script>
+</body>
+</html>
