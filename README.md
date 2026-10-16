@@ -59,6 +59,7 @@ the output schema and the hand-labeled results.
     python compare.py --runs opus-v1 haiku            # side-by-side metrics
     python view_tickets.py --open                     # browse tickets in a local HTML page
     python view_tickets.py --run latest --open        # the same, with a run's results
+    python baseline.py                                # non-LLM baseline on the training/test exports
 
 Runs are resumable: already classified tickets in a run are skipped. A run
 keeps its model, effort, prompt version and taxonomy version; reusing its name
@@ -132,6 +133,24 @@ prompt_version, taxonomy_version, the parsed output, dropped_mentions, matches
 (matched, ambiguous or unmatched with server_names), stop_reason, token
 counts, latency_ms, estimated_cost_usd and error.
 
+## Non-LLM baseline
+
+`baseline.py` sets the bar the LLM has to beat. It trains TF-IDF features
+(word 1-2 grams, subject and first 8,000 description characters fitted
+separately) with logistic regression on data/train_tickets.jsonl and scores
+on data/test_tickets.jsonl, predicting the Zendesk weak labels zendesk_type
+and category. These come from the DW2.0 exports in docs/dw-export-train.sql and
+docs/dw-export-test.sql, which never share a ticket; the script refuses files
+that do. Classes with fewer than 20 training tickets are merged into
+"(merged rare)", and tickets without the label are left out. It reports a
+learning curve (500, 1,000, 2,000 and all training tickets), accuracy and
+macro F1 for all tickets, alerts and human tickets, a majority-class reference,
+per-class precision and recall, the most common errors, and whether sub type
+is redundant with zendesk_type. Options: --targets, --min-count, --sizes,
+--max-chars, --seed, --train, --test. The report goes to
+data/reports/baseline-<timestamp>.md; the console shows metrics only. It runs
+locally and sends nothing to any service.
+
 ## Labeling
 
 `report.py` creates or updates data/labels.csv with the predicted values and
@@ -156,5 +175,6 @@ overwritten. Reports are written to data/reports/.
 - Do not store this folder in OneDrive or any synced location.
 - Delete data/ when the PoC ends unless the labels move into Keystone.
 - Obvious secrets (passwords, connection-string credentials, bearer tokens,
-  private keys) are masked before any text is sent to the model.
+  private keys, meeting passcodes and PINs, Teams join-link passcodes) are
+  masked before any text is sent to the model.
 - The scripts print ticket IDs and subjects only, never descriptions.
