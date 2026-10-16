@@ -227,3 +227,5 @@ other tables are in `dbo`.
   (`status_assignee_keys`), `FactTickets.Team`, and `DimClient.Pod` and
   `PrimaryDBA` (the client's, not necessarily who worked the ticket). The
   assignee dimension is still to be identified.
+- Zendesk ticket fields, exported with a `dw_` prefix: `FactTickets.Platform`, and
+  `Severity`, `Priority`, `Impact` and `Complexity` from `DimTicketAttributes`.

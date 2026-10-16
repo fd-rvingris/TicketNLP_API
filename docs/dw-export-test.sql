@@ -39,6 +39,11 @@
   was not in the schema export; join it here once it is known. A key of -1 or 0
   may mean unknown.
 
+  Zendesk ticket fields, prefixed dw_ so they are not confused with the same names
+  in alert text (kept for analysis, never sent to the model): dw_platform
+  (FactTickets.Platform), and dw_severity, dw_priority, dw_impact and
+  dw_complexity (DimTicketAttributes).
+
   Before relying on the results:
   - Run against production DW2.0, not FDReportingDev, unless the maintainers
     confirm the dev copy is current.
@@ -100,7 +105,12 @@ SELECT
     ISNULL(sa.Keys, '')                                AS status_assignee_keys,
     ISNULL(f.Team, '')                                 AS team,
     ISNULL(c.Pod, '')                                  AS client_pod,
-    ISNULL(c.PrimaryDBA, '')                           AS client_primary_dba
+    ISNULL(c.PrimaryDBA, '')                           AS client_primary_dba,
+    ISNULL(f.Platform, '')                             AS dw_platform,
+    ISNULL(a.Severity, '')                             AS dw_severity,
+    ISNULL(a.Priority, '')                             AS dw_priority,
+    ISNULL(a.Impact, '')                               AS dw_impact,
+    ISNULL(a.Complexity, '')                           AS dw_complexity
 FROM sample s
 JOIN dbo.FactTickets f              ON f.FactTickets_SK = s.FactTickets_SK
 LEFT JOIN dbo.DimClient c           ON c.Client_SK = f.Client_SK

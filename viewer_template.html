@@ -47,6 +47,10 @@
            background: var(--panel); border-bottom: 1px solid var(--line); }
   header h1 { margin: 0; font-size: 16px; font-weight: 600; }
   header .meta { color: var(--muted); font-size: 12px; }
+  header .open { padding: 2px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); cursor: pointer; }
+  header .open:hover { border-color: var(--accent); }
+  #load-status.bad { color: var(--bad); }
+  body.dragging main { outline: 2px dashed var(--accent); outline-offset: -6px; }
 
   main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(300px, 400px) 1fr; }
   aside { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); }
@@ -104,7 +108,10 @@
 <body>
 <header>
   <h1>Ticket Viewer</h1>
+  <button type="button" class="open" id="open-file" title="Load a .jsonl ticket file from load_export.py, split_alerts.py or fetch_tickets.py; you can also drop it on the page">Open ticket file…</button>
+  <input type="file" id="file-input" accept=".jsonl,.ndjson,.json" hidden>
   <span class="meta" id="meta"></span>
+  <span class="meta" id="load-status" role="status"></span>
   <span class="meta">Keys: <span class="kbd">j</span>/<span class="kbd">k</span> next/previous, <span class="kbd">/</span> search, <span class="kbd">t</span> toggle text</span>
 </header>
 <main>
@@ -123,6 +130,7 @@
         <select id="category" aria-label="Category"></select>
         <select id="client" aria-label="Client"></select>
       </div>
+      <select id="alert-name" aria-label="Alert name"></select>
       <select id="pred" aria-label="Prediction" hidden></select>
       <div class="count" id="count"></div>
     </div>
@@ -135,9 +143,11 @@
 <script>
 (function () {
   "use strict";
-  const DATA = JSON.parse(document.getElementById("viewer-data").textContent);
-  const TICKETS = DATA.tickets;
-  const byId = new Map(TICKETS.map(t => [t.ticket_id, t]));
+  // DATA, TICKETS and byId are replaced when a file is opened in the page (see load below).
+  let DATA = JSON.parse(document.getElementById("viewer-data").textContent);
+  let TICKETS = DATA.tickets;
+  let byId = new Map(TICKETS.map(t => [t.ticket_id, t]));
+  const RULES = DATA.mask_rules;
   const $ = id => document.getElementById(id);
   const state = { view: "sent", selected: null, shown: [] };
 
@@ -157,13 +167,10 @@
   const chip = (text, cls) => el("span", { class: "chip" + (cls ? " " + cls : "") }, text);
   const fmt = n => Number(n).toLocaleString();
   const weak = (t, key) => (t.weak_labels || {})[key] || "";
+  const alertName = t => (t.alert_fields || {}).alert_name || "";
   const prediction = t => t.result && t.result.output;
 
   // --- Header and filters ---------------------------------------------------
-  const alerts = TICKETS.filter(t => t.is_alert === true).length;
-  $("meta").textContent = `${fmt(TICKETS.length)} tickets from ${DATA.source} (${fmt(alerts)} alerts)` +
-    (DATA.run ? ` · run ${DATA.run}` : "") + ` · generated ${DATA.generated_at}`;
-
   function fillSelect(select, label, values) {
     select.replaceChildren(el("option", { value: "" }, label));
     const counts = new Map();
@@ -171,12 +178,22 @@
     [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]))
       .forEach(([v, n]) => select.append(el("option", { value: v }, `${v} (${n})`)));
   }
-  fillSelect($("ztype"), "Any Zendesk type", TICKETS.map(t => weak(t, "zendesk_type")));
-  fillSelect($("category"), "Any category", TICKETS.map(t => weak(t, "category")));
-  fillSelect($("client"), "Any client", TICKETS.map(t => t.organization_name));
-  if (DATA.run) {
+  function setupHeaderAndFilters() {
+    const alerts = TICKETS.filter(t => t.is_alert === true).length;
+    $("meta").textContent = TICKETS.length || DATA.source !== "no file"
+      ? `${fmt(TICKETS.length)} tickets from ${DATA.source} (${fmt(alerts)} alerts)` +
+        (DATA.run ? ` · run ${DATA.run}` : "") +
+        ` · ${DATA.generated_at.startsWith("opened") ? "" : "generated "}${DATA.generated_at}`
+      : "No ticket file loaded";
+    $("q").value = "";
+    $("kind").value = "";
+    fillSelect($("ztype"), "Any Zendesk type", TICKETS.map(t => weak(t, "zendesk_type")));
+    fillSelect($("category"), "Any category", TICKETS.map(t => weak(t, "category")));
+    fillSelect($("client"), "Any client", TICKETS.map(t => t.organization_name));
+    fillSelect($("alert-name"), "Any alert name", TICKETS.map(alertName));
+    $("alert-name").hidden = !TICKETS.some(alertName);
     const pred = $("pred");
-    pred.hidden = false;
+    pred.hidden = !DATA.run;
     pred.replaceChildren(el("option", { value: "" }, "Any prediction"),
                          el("option", { value: "failed" }, "Failed"),
                          el("option", { value: "missing" }, "Not classified"));
@@ -193,6 +210,7 @@
     if ($("ztype").value && weak(t, "zendesk_type") !== $("ztype").value) return false;
     if ($("category").value && weak(t, "category") !== $("category").value) return false;
     if ($("client").value && t.organization_name !== $("client").value) return false;
+    if ($("alert-name").value && alertName(t) !== $("alert-name").value) return false;
     const pv = DATA.run ? $("pred").value : "";
     if (pv === "failed" && !(t.result && t.result.error)) return false;
     if (pv === "missing" && t.result) return false;
@@ -228,7 +246,7 @@
     const li = e.target.closest("li[data-id]");
     if (li) select(li.dataset.id);
   });
-  ["q", "kind", "ztype", "category", "client", "pred"].forEach(id => $(id).addEventListener("input", renderList));
+  ["q", "kind", "ztype", "category", "client", "alert-name", "pred"].forEach(id => $(id).addEventListener("input", renderList));
 
   function select(id) {
     state.selected = id;
@@ -283,6 +301,19 @@
            .flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v)]));
   }
 
+  // Fields parsed from the alert text by alert_parser.py (never sent to the model).
+  const ALERT_FIELD_ORDER = ["alert_name", "severity", "level", "previous_level", "server", "instance", "platform",
+    "db_instance", "job", "env", "alert_id", "open_date", "failures", "ok_collections", "collector", "alias", "keyword",
+    "summary", "message", "description", "recommendations"];
+  function alertCard(t) {
+    const a = t.alert_fields;
+    if (!a) return null;
+    const keys = [...ALERT_FIELD_ORDER, ...Object.keys(a).filter(k => k !== "family" && k !== "client_name" && !ALERT_FIELD_ORDER.includes(k))];
+    const pairs = keys.filter(k => a[k]).map(k => [k.replace(/_/g, " "), a[k]]);
+    return el("div", { class: "card" }, el("h3", {}, `Alert fields · ${a.family.replace(/_/g, " ")}`),
+      pairs.length ? fields(pairs) : el("div", { class: "stats" }, "No fields are parsed for this alert format."));
+  }
+
   function resultCard(t) {
     const r = t.result;
     if (!DATA.run) return null;
@@ -318,11 +349,16 @@
 
   function renderDetail() {
     const t = byId.get(state.selected);
-    if (!t) { $("detail").replaceChildren(el("div", { class: "empty" }, "No ticket matches the filters.")); return; }
+    if (!t) {
+      $("detail").replaceChildren(el("div", { class: "empty" }, TICKETS.length ? "No ticket matches the filters."
+        : "Open a .jsonl ticket file with the button above, or drop one on the page."));
+      return;
+    }
     const sent = state.view === "sent";
     const text = sent ? t.sent_description : t.description;
     const chars = (t.sent_subject || "").length + (t.sent_description || "").length;
     const labels = Object.entries(t.weak_labels || {});
+    const dwFields = Object.entries(t.dw_fields || {}).filter(([, v]) => v);
 
     const viewBtn = (value, label) => {
       const b = el("button", { type: "button", "aria-pressed": String(state.view === value) }, label);
@@ -330,7 +366,8 @@
       return b;
     };
 
-    $("detail").replaceChildren(
+    // resultCard is null without --run; replaceChildren would show it as the text "null"
+    $("detail").replaceChildren(...[
       el("h2", {}, highlighted(sent ? t.sent_subject : t.subject || "(no subject)")),
       el("div", { class: "card" }, fields([
         ["Ticket", "#" + t.ticket_id],
@@ -340,9 +377,11 @@
         ["Kind", t.is_alert === true ? chip("alert", "alert") : t.is_alert === false ? chip("human") : ""],
         ["Weak labels", labels.length ? el("span", { class: "chips" }, labels.map(([k, v]) => chip(`${k}: ${v}`))) : ""],
         ["DW2.0 servers", (t.dw_servers || []).join(", ")],
+        ["DW2.0 fields", dwFields.length ? el("span", { class: "chips" }, dwFields.map(([k, v]) => chip(`${k}: ${v}`))) : ""],
         ["Tags", (t.tags || []).join(", ")],
         ["Source", t.source],
       ])),
+      alertCard(t),
       resultCard(t),
       el("div", { class: "card" },
         el("div", { class: "text-bar" },
@@ -351,10 +390,101 @@
             `${fmt(chars)} characters sent · about ${fmt(Math.ceil(chars / 4))} tokens · ` +
             `${t.secrets_masked} secret${t.secrets_masked === 1 ? "" : "s"} masked`)),
         text ? el("pre", { class: "text" }, highlighted(text)) : el("div", { class: "stats" }, "This ticket has no description."))
-    );
+    ].filter(Boolean));
   }
 
+  // --- Opening another file ----------------------------------------------------
+  // NODE-TESTED-START. Masking and parsing for a file opened in the page, with no page access, so
+  // tests/test_viewer.py can run this block in Node and compare it with Python. The rules are common.py's
+  // own patterns, embedded by view_tickets.py, so a file opened here is masked exactly as classify.py would.
+  function compileRule(r) { return { re: new RegExp(r.source, r.flags), replacement: r.replacement }; }
+
+  function maskText(text, secretRules, tagRule) {
+    let masked = 0;
+    for (const r of secretRules) {
+      masked += [...text.matchAll(r.re)].length;
+      text = text.replace(r.re, r.replacement);
+    }
+    return [text.replace(tagRule.re, tagRule.replacement), masked];
+  }
+  const SECRET_RULES = RULES.secrets.map(compileRule);
+  const TAG_RULE = compileRule(RULES.prompt_tags);
+
+  // The same fields view_tickets.py adds: the text as classify.py would send it. A file opened here
+  // carries no run results.
+  function viewerTicket(t) {
+    const [subject, n1] = maskText(String(t.subject || ""), SECRET_RULES, TAG_RULE);
+    const [description, n2] = maskText(String(t.description || ""), SECRET_RULES, TAG_RULE);
+    return { ...t, ticket_id: String(t.ticket_id).trim(), sent_subject: subject, sent_description: description,
+             secrets_masked: n1 + n2, result: null };
+  }
+
+  function parseTickets(name, text) {
+    if (/\.csv$/i.test(name)) throw new Error("This is a CSV export. Run load_export.py on it first, then open the .jsonl file it writes.");
+    let items, skipped = 0;
+    if (/\.json$/i.test(name)) {
+      const data = JSON.parse(text);
+      items = Array.isArray(data) ? data : data.tickets || [];
+    } else {
+      items = [];
+      for (const line of text.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        try { items.push(JSON.parse(line)); } catch { skipped++; }
+      }
+    }
+    const tickets = [];
+    for (const t of items) {
+      if (t && typeof t === "object" && t.ticket_id !== undefined && t.ticket_id !== null && String(t.ticket_id).trim()) tickets.push(viewerTicket(t));
+      else skipped++;
+    }
+    return { tickets, skipped };
+  }
+  // NODE-TESTED-END
+
+  function load(data) {
+    DATA = data;
+    TICKETS = data.tickets;
+    byId = new Map(TICKETS.map(t => [t.ticket_id, t]));
+    setupHeaderAndFilters();
+    state.selected = null;
+    history.replaceState(null, "", location.pathname + location.search);
+    renderList();
+  }
+
+  function setStatus(text, bad) {
+    $("load-status").textContent = text;
+    $("load-status").className = "meta" + (bad ? " bad" : "");
+  }
+
+  // The file is read in this browser only; nothing is uploaded or saved.
+  async function openFile(file) {
+    if (!file) return;
+    setStatus(`Reading ${file.name}…`);
+    try {
+      const { tickets, skipped } = parseTickets(file.name, await file.text());
+      if (!tickets.length) throw new Error(`No tickets with a ticket_id in ${file.name}.`);
+      load({ source: file.name, run: null, generated_at: "opened " + new Date().toLocaleString(), tickets });
+      setStatus(skipped ? `${fmt(skipped)} unreadable line${skipped === 1 ? "" : "s"} skipped` : "", skipped > 0);
+    } catch (err) {
+      setStatus(err instanceof SyntaxError ? `${file.name} is not valid JSON.` : err.message, true);
+    }
+  }
+
+  $("open-file").addEventListener("click", () => $("file-input").click());
+  $("file-input").addEventListener("change", e => { openFile(e.target.files[0]); e.target.value = ""; });
+  let dragDepth = 0;
+  document.addEventListener("dragenter", e => { if (e.dataTransfer.types.includes("Files")) { dragDepth++; document.body.classList.add("dragging"); } });
+  document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
+  document.addEventListener("dragover", e => e.preventDefault());
+  document.addEventListener("drop", e => {
+    e.preventDefault();
+    dragDepth = 0;
+    document.body.classList.remove("dragging");
+    openFile(e.dataTransfer.files[0]);
+  });
+
   // --- Start ------------------------------------------------------------------
+  setupHeaderAndFilters();
   const fromHash = location.hash.startsWith("#t") ? location.hash.slice(2) : null;
   state.selected = byId.has(fromHash) ? fromHash : null;
   renderList();

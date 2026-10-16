@@ -20,6 +20,7 @@ import requests
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
+from alert_parser import parse_alert
 from schema import OUTPUT_SCHEMA, TAXONOMY, TAXONOMY_VERSION, TicketClassification
 
 ROOT = Path(__file__).parent
@@ -110,6 +111,14 @@ def _server_list(value) -> list[str]:
 
 
 STAFF_FIELDS = ["assignee_key", "status_assignee_keys", "team", "client_pod", "client_primary_dba"]
+# Zendesk ticket fields from DW2.0 (FactTickets.Platform and DimTicketAttributes), exported with a dw_ prefix
+# so they are not confused with the same names parsed from alert text.
+DW_FIELDS = ["platform", "severity", "priority", "impact", "complexity"]
+
+
+def _dw_fields(values: dict | None) -> dict:
+    values = values or {}
+    return {k: str(values[k]).strip() or None if values.get(k) not in (None, "") else None for k in DW_FIELDS}
 
 
 def _staff(staff: dict | None) -> dict:
@@ -123,10 +132,11 @@ def _staff(staff: dict | None) -> dict:
 
 def make_ticket(ticket_id, subject, description, *, organization_id=None, organization_name=None,
                 created_at=None, tags=None, weak_labels=None, source="", is_alert=None, dw_servers=None,
-                staff=None) -> dict:
-    """is_alert, dw_servers and staff come from the DW2.0 export (automated monitoring ticket, servers
-    with time logged against the ticket, and who handled it); they are kept for review and reporting,
-    never sent to the model."""
+                staff=None, dw_fields=None) -> dict:
+    """is_alert, dw_servers, staff and dw_fields come from the DW2.0 export (automated monitoring ticket,
+    servers with time logged against the ticket, who handled it, and Zendesk platform, severity, priority,
+    impact and complexity). alert_fields are parsed from an alert's text by alert_parser.py. All of them are
+    kept for review and reporting, never sent to the model."""
     return {
         "ticket_id": str(ticket_id).strip(),
         "subject": subject or "",
@@ -139,6 +149,8 @@ def make_ticket(ticket_id, subject, description, *, organization_id=None, organi
         "is_alert": _flag(is_alert),
         "dw_servers": _server_list(dw_servers),
         "staff": _staff(staff),
+        "dw_fields": _dw_fields(dw_fields),
+        "alert_fields": parse_alert(subject or "", description or ""),
         "source": source,
     }
 
@@ -182,6 +194,7 @@ def mask_secrets(text: str) -> tuple[str, int]:
 
 
 _PROMPT_TAGS = re.compile(r"<(/?)(ticket|subject|description|client_servers)\b", re.I)
+PROMPT_TAG_REPLACEMENT = r"<\1 \2"
 
 
 def prepare_ticket_text(ticket: dict) -> tuple[str, str, int]:
@@ -189,8 +202,8 @@ def prepare_ticket_text(ticket: dict) -> tuple[str, str, int]:
     Returns (subject, description, secrets_masked)."""
     subject, n1 = mask_secrets(ticket.get("subject") or "")
     description, n2 = mask_secrets(ticket.get("description") or "")
-    subject = _PROMPT_TAGS.sub(r"<\1 \2", subject)
-    description = _PROMPT_TAGS.sub(r"<\1 \2", description)
+    subject = _PROMPT_TAGS.sub(PROMPT_TAG_REPLACEMENT, subject)
+    description = _PROMPT_TAGS.sub(PROMPT_TAG_REPLACEMENT, description)
     return subject, description, n1 + n2
 
 
