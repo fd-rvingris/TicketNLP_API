@@ -388,6 +388,8 @@ def rules_only_model():
     ("the REPORTS instance on FAKESQL01 is down", {"REPORTS": ("bare_instance", "instance:name_before_instance"),
                                                    "FAKESQL01": ("host", "host:after_server_word")}),
     ("please reboot server appbox7", {"appbox7": ("host", "host:after_server_word")}),
+    ("Host(s): Q9ZZPAP07K\nDatabase:", {"Q9ZZPAP07K": ("host", "host:after_server_word")}),
+    ("Server(s): fakesql03, fakesql04", {"fakesql03": ("host", "host:after_server_word")}),
 ])
 def test_rules_detect_without_the_model(text, expected):
     d = sd.LocalServerDirectory.from_sources([], None)
@@ -400,6 +402,7 @@ def test_rules_detect_without_the_model(text, expected):
     "Open localhost:8080 and portal7:443 in a browser",  # web ports, not SQL Server ports
     "the instance on this server is slow",  # filler words next to the cues
     "Server rebooted at noon",
+    "it's fake7 again",  # a split-off "s" after a word that is not a server word
 ])
 def test_rules_do_not_fire_on_ordinary_wording(text):
     d = sd.LocalServerDirectory.from_sources([], None)
@@ -455,3 +458,13 @@ def test_thresholds_are_chosen_without_rule_matches():
     recs = [{"label": "host", "ph": 0.95, "pi": 0.0, "rule": "host:port"} for _ in range(50)]
     recs += [{"label": "host", "ph": 0.6, "pi": 0.0, "rule": None}, {"label": "none", "ph": 0.3, "pi": 0.0, "rule": None}]
     assert sd.best_f1_threshold(recs, "host") == pytest.approx(0.6)
+
+
+def test_without_labeled_drops_holdout_tickets(tmp_path):
+    from common import write_jsonl
+    tickets = [human(str(i), "on server fakesql01") for i in range(4)]
+    labels = tmp_path / "holdout.jsonl"
+    write_jsonl(labels, [{"ticket_id": "1", "labeler": "claude"}, {"ticket_id": "3", "labeler": "claude"}])
+    kept = sd.without_labeled(tickets, [labels, tmp_path / "missing.jsonl"])
+    assert [t["ticket_id"] for t in kept] == ["0", "2"]
+    assert sd.without_labeled(tickets, []) == tickets

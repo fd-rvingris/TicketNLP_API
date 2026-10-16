@@ -40,6 +40,8 @@ from common import (DATA_DIR, INSTANCES_PATH, REPORTS_DIR, ParsedName, fmt_pct, 
                     parse_server_name, read_jsonl, write_jsonl)
 
 MODEL_PATH = DATA_DIR / "models" / "server_detector.joblib"
+# Claude-labeled training tickets kept out of training and never tuned on: the unseen-name test set.
+HOLDOUT_LABELS_PATH = DATA_DIR / "labels" / "claude_spans_holdout.jsonl"
 CLASSES = ("host", "instance", "none")
 DEFAULT_MAX_CHARS = 20_000  # description characters read per ticket
 DEFAULT_THRESHOLD = 0.5  # used only when no validation split is available
@@ -699,6 +701,8 @@ def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | Non
     prev1 = words[ti - 1] if ti >= 1 else ""
     prev2 = words[ti - 2] if ti >= 2 else ""
     next1 = words[ti + 1] if ti + 1 < len(words) else ""
+    if prev1 == "s" and prev2 in HOST_CUE_WORDS:  # "Host(s): NAME" and "server's NAME" split off an "s"
+        prev1, prev2 = prev2, words[ti - 3] if ti >= 3 else ""
     name = c["host"]
     has_digit = any(ch.isdigit() for ch in name)
     own_hosts = know.profile(client, "host").names
@@ -1626,6 +1630,9 @@ def parse_args(argv=None):
     shared.add_argument("--neg-ratio", type=float, default=DEFAULT_NEG_RATIO,
                         help="'none' training examples kept per positive")
     shared.add_argument("--model-path", type=Path, default=MODEL_PATH)
+    shared.add_argument("--exclude-labels", type=Path, nargs="*", default=[HOLDOUT_LABELS_PATH],
+                        help="label files whose tickets are left out of training (default: the Claude holdout "
+                             "set, when it exists); pass with no files to keep every ticket")
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("train", parents=[shared], help="fit on --train and save the model")
@@ -1638,8 +1645,19 @@ def parse_args(argv=None):
     return p.parse_args(argv)
 
 
+def without_labeled(tickets: list[dict], label_files) -> list[dict]:
+    """The tickets minus those labeled in any of label_files (missing files are ignored), so a
+    labeled holdout set drawn from the training file stays unseen by the model and the directory."""
+    ids = {str(r["ticket_id"]) for path in label_files if Path(path).exists() for r in read_jsonl(path)
+           if r.get("ticket_id") is not None}
+    kept = [t for t in tickets if str(t["ticket_id"]) not in ids]
+    if len(kept) < len(tickets):
+        print(f"Left out {len(tickets) - len(kept):,} labeled holdout tickets from training")
+    return kept
+
+
 def cmd_train(args) -> None:
-    train = read_jsonl(args.train)
+    train = without_labeled(read_jsonl(args.train), args.exclude_labels)
     if not train:
         raise SystemExit(f"Missing or empty ticket file: {args.train}")
     print("Selecting the model on a validation split ...")
@@ -1659,7 +1677,7 @@ def cmd_train(args) -> None:
 
 
 def cmd_evaluate(args) -> None:
-    train, test = read_jsonl(args.train), read_jsonl(args.test)
+    train, test = without_labeled(read_jsonl(args.train), args.exclude_labels), read_jsonl(args.test)
     if not train or not test:
         raise SystemExit(f"Missing or empty ticket file: {args.train if not train else args.test}")
     r = evaluate(train, test, seed=args.seed, holdout_share=args.holdout_share, max_chars=args.max_chars,
