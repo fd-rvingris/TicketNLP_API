@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 
-from common import TICKETS_PATH, make_ticket, merge_tickets
+from common import STAFF_FIELDS, TICKETS_PATH, make_ticket, merge_tickets
 from fetch_tickets import WEAK_LABEL_TITLE
 
 # Accepted CSV headers per field, compared case-insensitively.
@@ -21,7 +21,7 @@ COLUMN_ALIASES = {
     "zendesk_type": ["type", "ticket type"],
     "is_alert": ["is_alert", "is alert"],
     "dw_servers": ["dw_servers", "dw servers"],
-}
+} | {field: [field, field.replace("_", " ")] for field in STAFF_FIELDS}
 
 
 def clean(value: str | None) -> str:
@@ -57,6 +57,7 @@ def from_csv(path: Path, source: str) -> list[dict]:
                 organization_id=value["organization_id"], organization_name=value["organization_name"],
                 created_at=value["created_at"], tags=re.split(r"[\s,]+", value["tags"]) if value["tags"] else [],
                 weak_labels=weak, source=source, is_alert=value["is_alert"], dw_servers=value["dw_servers"],
+                staff={k: value[k] for k in STAFF_FIELDS},
             ))
         return tickets
 
@@ -75,6 +76,7 @@ def from_json(path: Path, source: str) -> list[dict]:
             created_at=t.get("created_at"), tags=t.get("tags"),
             weak_labels=t.get("weak_labels") or {"zendesk_type": t.get("type")}, source=source,
             is_alert=t.get("is_alert"), dw_servers=t.get("dw_servers"),
+            staff=t.get("staff") or {k: t.get(k) for k in STAFF_FIELDS},
         )
         for t in items if t.get("ticket_id", t.get("id")) is not None
     ]

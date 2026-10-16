@@ -109,10 +109,24 @@ def _server_list(value) -> list[str]:
     return list(dict.fromkeys(s.strip() for s in items if str(s).strip()))
 
 
+STAFF_FIELDS = ["assignee_key", "status_assignee_keys", "team", "client_pod", "client_primary_dba"]
+
+
+def _staff(staff: dict | None) -> dict:
+    """Who handled the ticket, from the DW2.0 export: DW2.0 assignee keys, team, and the client's
+    POD and primary DBA. Missing fields are None (status_assignee_keys is a list)."""
+    staff = staff or {}
+    out = {k: (str(staff.get(k)).strip() or None) if staff.get(k) not in (None, "") else None for k in STAFF_FIELDS}
+    out["status_assignee_keys"] = _server_list(staff.get("status_assignee_keys"))
+    return out
+
+
 def make_ticket(ticket_id, subject, description, *, organization_id=None, organization_name=None,
-                created_at=None, tags=None, weak_labels=None, source="", is_alert=None, dw_servers=None) -> dict:
-    """is_alert and dw_servers come from the DW2.0 export (automated monitoring ticket, and servers
-    with time logged against the ticket); they are kept for review and reporting, never sent to the model."""
+                created_at=None, tags=None, weak_labels=None, source="", is_alert=None, dw_servers=None,
+                staff=None) -> dict:
+    """is_alert, dw_servers and staff come from the DW2.0 export (automated monitoring ticket, servers
+    with time logged against the ticket, and who handled it); they are kept for review and reporting,
+    never sent to the model."""
     return {
         "ticket_id": str(ticket_id).strip(),
         "subject": subject or "",
@@ -124,6 +138,7 @@ def make_ticket(ticket_id, subject, description, *, organization_id=None, organi
         "weak_labels": {k: v for k, v in (weak_labels or {}).items() if v not in (None, "", [])},
         "is_alert": _flag(is_alert),
         "dw_servers": _server_list(dw_servers),
+        "staff": _staff(staff),
         "source": source,
     }
 

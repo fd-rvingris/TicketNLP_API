@@ -23,6 +23,19 @@
      which git ignores, then run:
        python load_export.py data\train_tickets.csv --output data\train_tickets.jsonl
 
+  Staff columns, for grouping or filtering by DBA (kept for analysis, never sent
+  to the model):
+  - assignee_key: FactTickets.Assignee_SK, the ticket's assignee as loaded
+    (probably the last one).
+  - status_assignee_keys: every Assignee_SK in FactTicketStatus for the ticket,
+    that is, everyone who held it.
+  - team: FactTickets.Team.
+  - client_pod, client_primary_dba: DimClient.Pod and PrimaryDBA. These describe
+    the client, not who worked the ticket.
+  The keys are DW2.0 surrogate keys. The dimension that resolves them to names
+  was not in the schema export; join it here once it is known. A key of -1 or 0
+  may mean unknown.
+
   Before relying on the results:
   - Run against production DW2.0, not FDReportingDev, unless the maintainers
     confirm the dev copy is current.
@@ -38,7 +51,10 @@ DECLARE @Alerts int = 5000;
 DECLARE @Human int = 5000;
 DECLARE @Seed varchar(20) = 'train-1';
 
-DECLARE @Today date = CAST(GETDATE() AS date);
+-- The day the windows end. Fixed to the first export's date so a rerun returns the
+-- same tickets; set it to CAST(GETDATE() AS date) for a fresh sample. Keep it the
+-- same in both files.
+DECLARE @Today date = '2026-10-16';
 DECLARE @From date = DATEADD(year, -@YearsBack, @Today);
 DECLARE @To date = DATEADD(day, -@TestDays, @Today);
 
@@ -77,7 +93,12 @@ SELECT
     ISNULL(f.Category, '')                             AS [category],
     ISNULL(cat.Names, '')                              AS [categories],
     ISNULL(srv.Names, '')                              AS dw_servers,
-    s.is_alert                                         AS is_alert
+    s.is_alert                                         AS is_alert,
+    ISNULL(CAST(f.Assignee_SK AS varchar(20)), '')     AS assignee_key,
+    ISNULL(sa.Keys, '')                                AS status_assignee_keys,
+    ISNULL(f.Team, '')                                 AS team,
+    ISNULL(c.Pod, '')                                  AS client_pod,
+    ISNULL(c.PrimaryDBA, '')                           AS client_primary_dba
 FROM sample s
 JOIN dbo.FactTickets f              ON f.FactTickets_SK = s.FactTickets_SK
 LEFT JOIN dbo.DimClient c           ON c.Client_SK = f.Client_SK
@@ -90,4 +111,7 @@ OUTER APPLY (SELECT STRING_AGG(NULLIF(LTRIM(dc.CategoryName), ''), '; ') AS Name
 OUTER APPLY (SELECT STRING_AGG(NULLIF(LTRIM(ds.ServerName), ''), '; ') AS Names
              FROM dbo.TicketServer ts JOIN dbo.DimTicketServer ds ON ds.TicketServer_SK = ts.TicketServer_SK
              WHERE ts.FactTickets_SK = f.FactTickets_SK) srv
+OUTER APPLY (SELECT STRING_AGG(CAST(x.Assignee_SK AS varchar(20)), '; ') WITHIN GROUP (ORDER BY x.Assignee_SK) AS Keys
+             FROM (SELECT DISTINCT st.Assignee_SK FROM dbo.FactTicketStatus st
+                   WHERE st.FactTickets_SK = f.FactTickets_SK AND st.Assignee_SK IS NOT NULL) x) sa
 ORDER BY f.TicketID;

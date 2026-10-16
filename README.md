@@ -71,6 +71,12 @@ export column names), .json and .jsonl/.ndjson files. CSV cells containing the
 text NULL (as SSMS writes SQL NULL) are treated as empty. Optional is_alert
 (1/0) and dw_servers (semicolon-separated) columns from the DW2.0 export are
 kept on each ticket for review and reporting; they are never sent to the model.
+The same holds for the optional staff columns (assignee_key,
+status_assignee_keys, team, client_pod, client_primary_dba), which are kept
+under `staff` on each ticket for grouping or filtering by DBA. The assignee
+values are DW2.0 surrogate keys until the dimension that names them is known.
+The export queries fix the end of their date windows (@Today) so a rerun
+returns the same tickets.
 
 `view_tickets.py` writes data/viewer/<ticket file>[-<run>].html: a single page
 with no network access that lists the tickets with search and filters (alert

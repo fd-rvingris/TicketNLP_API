@@ -222,3 +222,8 @@ other tables are in `dbo`.
 - `DimTicketCategory` through `TicketCategory`: category names as weak labels.
 - `DimTicketServer` through `TicketServer`: server names, kept as `dw_servers`, a
   candidate check on the model's server mentions.
+- Staff columns, for grouping or filtering by DBA: `FactTickets.Assignee_SK`
+  (`assignee_key`), the distinct `FactTicketStatus.Assignee_SK` values
+  (`status_assignee_keys`), `FactTickets.Team`, and `DimClient.Pod` and
+  `PrimaryDBA` (the client's, not necessarily who worked the ticket). The
+  assignee dimension is still to be identified.
