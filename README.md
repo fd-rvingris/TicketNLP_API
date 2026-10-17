@@ -88,12 +88,27 @@ dw_priority, dw_impact and dw_complexity (Zendesk fields from DW2.0) are kept
 under `dw_fields`.
 
 Every loaded ticket also gets `alert_fields`, parsed from the text by
-alert_parser.py when the subject is a known alert format (null otherwise):
-the family (collector "Alert #", [FIRING, Backup Exception Report, Volume
-Capacity) and, for collector and [FIRING alerts, labeled fields such as
-alert_name, severity, level, server, instance, platform and message. Like
-the DW2.0 columns, these are for review and analysis and are never sent to
-the model.
+alert_parser.py when the text matches one of the alert layouts (null
+otherwise): collector labeled lines, the collector's one-line Markdown and
+table layouts, Backup Exception Reports, Grafana [FIRING alerts and Volume
+Capacity alerts. Layouts are recognised by their body as well as their
+subject, so pasted alert text is parsed too. The fields carry the family, the
+layout and values such as alert_name, client_name, server, instance, hosts,
+severity and open_date; the fields that name servers are listed once, in
+`SERVER_FIELDS`, and the server detector reads them from there. Like the
+DW2.0 columns, these are for review and analysis and are never sent to the
+model. See [docs/alert-parser.md](docs/alert-parser.md).
+
+    python alert_parser.py coverage data\train_tickets.jsonl data\test_tickets.jsonl
+    python alert_parser.py data\train_tickets.jsonl ...   # re-parse alert_fields in place
+    python alert_layouts.py inventory   # group alerts by template; masked report and examples
+
+`alert_layouts.py inventory` groups the alerts of the ticket files by layout
+signature (the template's labels and header lines, values removed) and writes
+data/reports/alert-layouts-<timestamp>.md and one masked example file per
+layout to data/alert_layouts/, to share with the collector owners. Examples
+keep template words only; every other word becomes its shape (SQL01 becomes
+L3 D2).
 
 `view_tickets.py` writes data/viewer/<ticket file>[-<run>].html: a single page
 with no network access that lists the tickets with search and filters (alert

@@ -35,7 +35,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from sklearn.preprocessing import MaxAbsScaler
 
-from alert_parser import COLLECTOR_LABELS, FIRING_LABELS
+from alert_parser import COLLECTOR_LABELS, FIRING_LABELS, SERVER_FIELDS
 from common import (DATA_DIR, INSTANCES_PATH, REPORTS_DIR, ParsedName, fmt_pct, md_table, now_iso,
                     parse_server_name, read_jsonl, write_jsonl)
 
@@ -211,9 +211,11 @@ def ticket_names(ticket: dict) -> list[ParsedName]:
     """Server-shaped names a ticket carries outside its text: DW2.0 servers and parsed alert fields."""
     values = list(ticket.get("dw_servers") or [])
     alert = ticket.get("alert_fields") or {}
-    values += [alert[k] for k in ("server", "instance", "db_instance") if alert.get(k)]
-    # "Host(s):" lists, and the backup report's "latest backup server" column
-    values += re.split(r"[,;\s]+", f"{alert.get('hosts') or ''} {alert.get('backup_servers') or ''}")
+    # One name each; "HOST, 1433" is read as HOST,1433
+    values += [re.sub(r",\s+(?=\d+$)", ",", alert[k].strip()) for k, is_list in SERVER_FIELDS.items()
+               if not is_list and alert.get(k)]
+    # Lists: "Host(s):", the backup report's "latest backup server" column, Grafana's instances and targets
+    values += re.split(r"[,;\s]+", " ".join(alert.get(k) or "" for k, is_list in SERVER_FIELDS.items() if is_list))
     names = [p for p in (normalize_reference(v) for v in values if v) if p]
     return list(dict.fromkeys(names))
 

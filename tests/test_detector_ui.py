@@ -79,6 +79,14 @@ def test_analyze_text_returns_table_alert_fields_and_spans():
     assert app().analyze_text({"text": "SQLA01 is down"})["alert_spans"] == []
 
 
+def test_analyze_text_returns_spans_for_the_labeled_layout():
+    from tests.test_alert_layouts import LABELED
+    r = app().analyze_text({"subject": "Fake Co - Alert #4401234 - FD - SQL Agent Job Failure", "text": LABELED})
+    assert r["alert_fields"]["layout"] == "collector_labeled"
+    spans = {s["field"]: LABELED[s["start"]:s["end"]] for s in r["alert_spans"] if s["in"] == "description"}
+    assert spans["server"] == "FAKESQL01" and spans["client_name"] == "Fake Co" and spans["severity"] == "Warning"
+
+
 def test_analyze_text_thresholds_and_validation():
     a = app()
     r = a.analyze_text({"text": "SQLA01 is down", "client": "100", "host_threshold": 0.95})
@@ -137,3 +145,36 @@ def test_page_has_both_inputs():
     for needle in ('id="text"', 'id="analyze"', 'id="zd-url"', 'id="fetch"', "/api/analyze", "/api/zendesk"):
         assert needle in html
     assert "http://" not in html.replace("http://127.0.0.1", "")  # loads nothing from the network
+
+
+def test_alert_catalog_has_one_example_per_type():
+    from tests.test_alert_layouts import LABELED, MARKDOWN
+    tickets = [make_ticket(i, f"Alert #{i} - FD - SQL Agent Job Failure", LABELED + "x" * i, organization_id=str(i % 2),
+                           is_alert=1) for i in range(3)]
+    tickets += [make_ticket(9, "Backup Exception Report from server FAKESQL09", "", is_alert=1),
+                make_ticket(10, "RE: Alert #1", "Thanks", organization_id="5", is_alert=1),
+                make_ticket(11, "Help", MARKDOWN, is_alert=0),  # alert-shaped, flagged human: still an alert
+                make_ticket(12, "Help", "Server is slow", is_alert=0)]
+    cat = {c["key"]: c for c in ui.alert_catalog(tickets)}
+    assert set(cat) == {"collector_labeled|FD - SQL Agent Job Failure", "backup_report|Backup Exception Report",
+                        "unrecognised|(no alert name)", "collector_markdown|Low Disk Space"}
+    job = cat["collector_labeled|FD - SQL Agent Job Failure"]
+    assert (job["alerts"], job["clients"], job["with_server"]) == (3, 2, 1.0)
+    assert job["example"]["ticket_id"] == "1"  # the median description length
+    assert job["example_fields"] > 10 and cat["unrecognised|(no alert name)"]["example_fields"] == 0
+
+
+def test_alert_types_endpoints_mask_and_analyze_the_example():
+    from tests.test_alert_layouts import LABELED
+    t = make_ticket(1, "Alert #1 - FD - SQL Agent Job Failure", LABELED + "password=hunter2\n", is_alert=1)
+    a = app()
+    a.catalog = {c["key"]: c for c in ui.alert_catalog([t])}
+    types = a.alert_types({})["types"]
+    assert len(types) == 1 and "example" not in types[0]
+    r = a.alert_example({"key": types[0]["key"]})
+    assert "hunter2" not in r["ticket"]["description"]
+    assert len(r["ticket"]["description"]) == len(t["description"])  # masked character for character
+    assert r["alert_type"]["alert_type"] == "FD - SQL Agent Job Failure"
+    assert r["alert_fields"]["server"] == "FAKESQL01" and any(s["field"] == "server" for s in r["alert_spans"])
+    with pytest.raises(ValueError, match="Unknown alert type"):
+        a.alert_example({"key": "nope"})

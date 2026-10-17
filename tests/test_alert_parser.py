@@ -73,7 +73,8 @@ def test_firing_alert_fields():
 
 
 def test_other_families_and_human_tickets():
-    assert parse_alert("Backup Exception Report", "DATABASENAME x") == {"family": "backup_exception_report"}
+    assert parse_alert("Backup Exception Report", "DATABASENAME x") == {"family": "backup_exception_report",
+                                                                     "layout": "backup_report"}
     assert parse_alert("Need access", "Severity Critical") is None
 
 
@@ -88,8 +89,8 @@ TABLE = ("CAUTION: This email originated from outside of the organization.\r\n\r
 
 def test_table_layout_fields():
     a = parse_alert("FAKECO - Alert #5 - Collection errors", TABLE)
-    assert a == {"family": "collector", "layout": "table", "client_name": "FAKECO - Zeta", "client_id": "123",
-                 "environment": "ZetaAzureEast", "environment_code": "Q9XAB12P", "server": "Q9ZZPAP07K",
+    assert a == {"family": "collector", "layout": "collector_table", "client_name": "FAKECO - Zeta", "client_id": "123",
+                 "environment": "ZetaAzureEast", "collector": "Q9XAB12P", "server": "Q9ZZPAP07K",
                  "alert_name": "Collection errors", "open_date": "2025-01-14 15:30:46",
                  "message": "ServerName: Q9ZZPAP07K (SQL Server)", "platform": "SQL Server",
                  "hosts": "Q9ZZPAP07K", "error_type": "SQL Server is unresponsive",
@@ -106,7 +107,7 @@ def test_table_spans_mark_each_value_where_it_is():
             "Threshold: 35\r\nDateTime Value: 2025-01-04 03:00:07\r\n")
     got = {s["field"]: text[s["start"]:s["end"]] for s in table_spans(text)}
     assert got == {"client_name": "FAKEHOLD - Fake Music", "client_id": "203", "environment": "Default",
-                   "environment_code": "FAK-LA01-WIS1", "alert_name": "No recent monitoring runs",
+                   "collector": "FAK-LA01-WIS1", "alert_name": "No recent monitoring runs",
                    "open_date": "2025-01-04 03:47:08", "message": "Minutes Delay: 45", "minutes_delay": "45",
                    "threshold": "35", "datetime_value": "2025-01-04 03:00:07"}
     assert table_spans("Client Name: Fake\nServer: x") == []  # no table header
@@ -123,11 +124,11 @@ def test_table_layout_without_alert_subject_and_variants():
     row = "Fake Co (7) Env1 (E1)   No data in recent collections 2025-01-18 11:00:48 UTC Missed runs: 3"
     a = parse_alert("", "Client Name Environment Name Server Alert Type Open Date (UTC) Message\n" + row)
     assert "server" not in a and a["alert_name"] == "No data in recent collections" and a["message"] == "Missed runs: 3"
-    # A Windows machine, with the environment code equal to its name
+    # A Windows machine, with the collector machine named like the environment
     row = ("Fake Health (100063) FAKEENV0 (FAKEENV0) EC2FAKE-AB12CDE Collection errors 2025-01-18 11:00:48 UTC "
            "ServerName: EC2FAKE-AB12CDE (Windows Machine)")
     a = parse_alert("", "Client Name Environment Name Server Alert Type Open Date (UTC) Message\n" + row)
-    assert (a["client_name"], a["client_id"], a["environment"], a["environment_code"], a["server"], a["platform"]) \
+    assert (a["client_name"], a["client_id"], a["environment"], a["collector"], a["server"], a["platform"]) \
         == ("Fake Health", "100063", "FAKEENV0", "FAKEENV0", "EC2FAKE-AB12CDE", "Windows Machine")
 
 
@@ -153,7 +154,7 @@ BACKUP = ("CAUTION: This email originated from outside of the organization.\r\n\
 
 def test_backup_exception_report_fields():
     a = parse_alert(r"Backup Exception Report from server FAKESQL01\PROD", BACKUP)
-    assert a == {"family": "backup_exception_report", "server": r"FAKESQL01\PROD",
+    assert a == {"family": "backup_exception_report", "layout": "backup_report", "server": r"FAKESQL01\PROD",
                  "environment_note": "PRODUCTION SERVER: PLEASE INVESTIGATE.",
                  "databases": "FakeOrionLog, Fake Sales DB", "backup_types": "Full, DIFF, LOG", "backup_rows": "3",
                  "max_hours_without": "26", "hoursforfull": "-25", "minutesfordiff": "-1500", "minutesforlog": "-60",
@@ -194,4 +195,4 @@ def test_table_header_with_non_breaking_spaces():
             "Fake Co (7) Env1 (E1) FAKESQL09 Collection errors 2025-01-18 11:00:48 UTC "
             "ServerName: FAKESQL09 (SQL Server)")
     a = parse_alert("", text)
-    assert a["layout"] == "table" and a["server"] == "FAKESQL09" and a["client_name"] == "Fake Co"
+    assert a["layout"] == "collector_table" and a["server"] == "FAKESQL09" and a["client_name"] == "Fake Co"

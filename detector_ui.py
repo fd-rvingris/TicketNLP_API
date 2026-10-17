@@ -1,6 +1,7 @@
 """A page for trying and labeling the server detector: paste text, or give a Zendesk ticket URL or
 number, and see the hosts and instances the saved model finds, with every scored candidate; and label
-a shared sample of tickets by hand (see server_labels.py).
+a shared sample of tickets by hand (see server_labels.py); and browse one example of every alert type in
+the ticket files, with its parsed fields highlighted.
 
 Serves on 127.0.0.1 by default (port 8765). With --host 0.0.0.0 it serves the network so several
 DBAs can label; there is no sign-in, labelers type their name, and Zendesk lookups are off unless
@@ -17,6 +18,7 @@ import json
 import re
 import socket
 import webbrowser
+from collections import defaultdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,7 +28,7 @@ import requests
 
 import server_detector as sd
 import server_labels as sl
-from alert_parser import backup_spans, table_spans
+from alert_parser import alert_spans, parse_alert
 from common import DATA_DIR, ZendeskClient, load_env, make_ticket, now_iso, read_jsonl
 
 PAGE_PATH = Path(__file__).parent / "detector_ui.html"
@@ -55,6 +57,9 @@ def parse_args():
                    help="share of sampled tickets labeled by two people, to measure agreement")
     p.add_argument("--label-seed", type=int, default=0)
     p.add_argument("--labels-path", type=Path, default=sl.LABELS_PATH)
+    p.add_argument("--alert-tickets", type=Path, nargs="*",
+                   default=[DATA_DIR / "train_tickets.jsonl", DATA_DIR / "test_tickets.jsonl"],
+                   help="ticket files the Alert types tab takes one example of each alert type from")
     p.add_argument("--open", action="store_true", help="open the page in the default browser")
     return p.parse_args()
 
@@ -129,14 +134,43 @@ def analyze(ticket: dict, bundle: dict, names: dict[str, str], *, host_threshold
         "thresholds": {"host": th_h, "instance": th_i},
         "detections": found,
         "alert_fields": ticket.get("alert_fields"),
-        # Where the table layout's values sit in the description, for highlighting
-        "alert_spans": [{**sp, "in": sp.get("in", "description")} for sp in
-                        table_spans(ticket.get("description") or "")
-                        + backup_spans(ticket.get("subject") or "", ticket.get("description") or "")],
+        # Where each alert value sits in the subject or description, for highlighting (every layout)
+        "alert_spans": alert_spans(ticket.get("subject") or "", ticket.get("description") or ""),
         "candidates": scored_candidates(ticket, directory, model),
         "max_chars": model.max_chars,
         "analyzed_at": now_iso(),
     }
+
+
+# --- Alert types -------------------------------------------------------------------
+
+# Layouts whose alerts have no alert name of their own
+FIXED_ALERT_TYPES = {"backup_report": "Backup Exception Report"}
+
+
+def alert_catalog(tickets: list[dict]) -> list[dict]:
+    """One entry per alert type (layout and alert name) in the tickets: how many alerts and clients it
+    has, the share whose parsed fields name a server, and an example ticket of typical length (the
+    median description). Alerts are tickets flagged is_alert or recognised by a layout; fields are
+    parsed again, so the catalog follows the current parser."""
+    groups: dict[tuple[str, str], list[tuple[dict, dict | None]]] = defaultdict(list)
+    for t in tickets:
+        fields = parse_alert(t.get("subject") or "", t.get("description") or "")
+        if t.get("is_alert") is not True and not fields:
+            continue
+        layout = (fields or {}).get("layout") or "unrecognised"
+        name = ((fields or {}).get("alert_name") or "").strip() or FIXED_ALERT_TYPES.get(layout) or "(no alert name)"
+        groups[(layout, name)].append((t, fields))
+    out = []
+    for (layout, name), members in groups.items():
+        members.sort(key=lambda m: (len(m[0].get("description") or ""), str(m[0].get("ticket_id"))))
+        example, fields = members[len(members) // 2]
+        out.append({"key": f"{layout}|{name}", "layout": layout, "alert_type": name, "alerts": len(members),
+                    "clients": len({sd.ticket_client_keys(t) for t, _ in members}),
+                    "with_server": round(sum(bool(f and sd.ticket_names({"alert_fields": f})) for _, f in members)
+                                         / len(members), 3),
+                    "example_fields": len(set(fields or {}) - {"family", "layout"}), "example": example})
+    return sorted(out, key=lambda r: (r["layout"], -r["alerts"], r["alert_type"].lower()))
 
 
 # --- Zendesk -----------------------------------------------------------------------
@@ -180,9 +214,11 @@ def fetch_ticket(zd: ZendeskClient, ticket_id: str) -> dict:
 
 class App:
     def __init__(self, bundle: dict, names: dict[str, str], zendesk: ZendeskClient | None, subdomain: str | None,
-                 port: int, queue: sl.LabelQueue | None = None, allowed_hosts: set[str] | None = None):
+                 port: int, queue: sl.LabelQueue | None = None, allowed_hosts: set[str] | None = None,
+                 catalog: list[dict] | None = None):
         self.bundle, self.names, self.zendesk, self.subdomain, self.port = bundle, names, zendesk, subdomain, port
         self.queue = queue
+        self.catalog = {c["key"]: c for c in catalog or []}
         self.allowed_hosts = allowed_hosts or {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     # --- Labeling ----------------------------------------------------------------
@@ -255,6 +291,26 @@ class App:
                              "labeled_at": r.get("labeled_at")} for r in rows],
                 "progress": queue.progress(labeler)}
 
+    # --- Alert types -------------------------------------------------------------
+
+    def alert_types(self, body: dict) -> dict:
+        return {"types": [{k: v for k, v in c.items() if k != "example"} for c in self.catalog.values()]}
+
+    def alert_example(self, body: dict) -> dict:
+        """The analysis of a type's example ticket, secrets masked character for character as on the
+        labeling tab, with the type's counts."""
+        entry = self.catalog.get(str(body.get("key") or ""))
+        if not entry:
+            raise ValueError("Unknown alert type")
+        t = dict(entry["example"])
+        t["subject"] = sl.mask_same_length(t.get("subject") or "")[0]
+        t["description"] = sl.mask_same_length(t.get("description") or "")[0]
+        t["alert_fields"] = parse_alert(t["subject"], t["description"])
+        result = analyze(t, self.bundle, self.names, host_threshold=body.get("host_threshold"),
+                         instance_threshold=body.get("instance_threshold"))
+        result["alert_type"] = {k: v for k, v in entry.items() if k != "example"}
+        return result
+
     def info(self) -> dict:
         directory, model = self.bundle["directory"], self.bundle["model"]
         clients = sorted(({"key": k, "name": self.names.get(k) or (k[5:] if k.startswith("name:") else k),
@@ -266,7 +322,8 @@ class App:
                           "created_at": self.bundle.get("created_at")},
                 "directory": directory.stats(), "zendesk": self.subdomain if self.zendesk else None,
                 "labeling": {"sample": len(self.queue.order), "overlap": self.queue.progress()["overlap_tickets"]}
-                if self.queue else None}
+                if self.queue else None,
+                "alert_types": len(self.catalog)}
 
     def analyze_text(self, body: dict) -> dict:
         text, subject = str(body.get("text") or ""), str(body.get("subject") or "")
@@ -354,7 +411,8 @@ def make_handler(app: App):
                 return self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid JSON"})
             routes = {"/api/analyze": app.analyze_text, "/api/zendesk": app.analyze_zendesk,
                       "/api/label/next": app.label_next, "/api/label/open": app.label_open,
-                      "/api/label/save": app.label_save, "/api/label/mine": app.label_mine}
+                      "/api/label/save": app.label_save, "/api/label/mine": app.label_mine,
+                      "/api/alert-types": app.alert_types, "/api/alert-types/example": app.alert_example}
             route = routes.get(self.path.split("?")[0])
             if not route:
                 return self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
@@ -397,7 +455,7 @@ def allowed_host_names(host: str, port: int, extra: list[str]) -> set[str]:
 def make_app(model_path: Path, train_path: Path, port: int, *, zendesk_mode: str = "auto", network: bool = False,
              label_tickets: Path | None = None, label_sample: int = 200, label_kind: str = "human",
              label_overlap: float = 0.15, label_seed: int = 0, labels_path: Path = sl.LABELS_PATH,
-             allowed_hosts: set[str] | None = None) -> App:
+             allowed_hosts: set[str] | None = None, alert_tickets: list[Path] | None = None) -> App:
     if not model_path.exists():
         raise SystemExit(f"No model at {model_path}. Run: python server_detector.py train")
     bundle = joblib.load(model_path)
@@ -420,7 +478,10 @@ def make_app(model_path: Path, train_path: Path, port: int, *, zendesk_mode: str
               f"{queue.progress()['overlap_tickets']} of them labeled twice; labels go to {labels_path}")
     else:
         print(f"Labeling is off: {label_tickets} was not found")
-    return App(bundle, names, zendesk, subdomain, port, queue, allowed_hosts)
+    found = [p for p in alert_tickets or [] if p.exists()]
+    catalog = alert_catalog([t for p in found for t in read_jsonl(p)])
+    print(f"Alert types: {len(catalog)} types from {', '.join(p.name for p in found) or 'no ticket files'}")
+    return App(bundle, names, zendesk, subdomain, port, queue, allowed_hosts, catalog)
 
 
 def main():
@@ -429,7 +490,8 @@ def main():
     app = make_app(args.model_path, args.train, args.port, zendesk_mode=args.zendesk, network=network,
                    label_tickets=args.label_tickets, label_sample=args.label_sample, label_kind=args.label_kind,
                    label_overlap=args.label_overlap, label_seed=args.label_seed, labels_path=args.labels_path,
-                   allowed_hosts=allowed_host_names(args.host, args.port, args.allow_host))
+                   allowed_hosts=allowed_host_names(args.host, args.port, args.allow_host),
+                   alert_tickets=args.alert_tickets)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(app))
     url = f"http://127.0.0.1:{args.port}/"
     print(f"Server detector UI at {url} (model {app.bundle.get('created_at')}, "

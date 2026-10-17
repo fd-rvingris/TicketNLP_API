@@ -103,6 +103,8 @@
   .help { font-size: 13px; }
   .help ul { margin: 6px 0; padding-left: 20px; }
   .progress { font-size: 13px; }
+  .types-wrap { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; }
+  .types-wrap th { position: sticky; top: 0; background: var(--bg); }
 </style>
 </head>
 <body>
@@ -116,6 +118,7 @@
       <button type="button" role="tab" id="tab-text" aria-selected="true" aria-controls="panel-text">Paste text</button>
       <button type="button" role="tab" id="tab-zendesk" aria-selected="false" aria-controls="panel-zendesk">Zendesk ticket</button>
       <button type="button" role="tab" id="tab-label" aria-selected="false" aria-controls="panel-label" hidden>Label tickets</button>
+      <button type="button" role="tab" id="tab-types" aria-selected="false" aria-controls="panel-types" hidden>Alert types</button>
     </div>
     <div id="panel-text" role="tabpanel" aria-labelledby="tab-text" style="display:grid; gap:8px">
       <div class="row">
@@ -143,6 +146,14 @@
       </div>
       <div class="progress meta" id="label-progress"></div>
       <div class="error" id="label-error" role="alert" hidden></div>
+    </div>
+    <div id="panel-types" role="tabpanel" aria-labelledby="tab-types" hidden style="display:none; gap:8px">
+      <div class="row">
+        <label class="grow">Filter<input type="search" id="types-filter" placeholder="Alert type or layout"></label>
+        <label>Layout<select id="types-layout"><option value="">All layouts</option></select></label>
+      </div>
+      <div class="meta" id="types-note"></div>
+      <div class="types-wrap" id="types-list"></div>
     </div>
     <div class="row" id="th-row">
       <label>Host threshold<input type="number" id="th-host" min="0" max="1" step="0.05"></label>
@@ -211,6 +222,7 @@
 
   async function run(path, body, button) {
     if (busy) return;
+    button = button || { disabled: false, textContent: "" };  // the Alert types table has no button
     busy = true; button.disabled = true; setError("");
     const label = button.textContent; button.textContent = "Working…";
     try {
@@ -230,21 +242,29 @@
 
   // --- Rendering -------------------------------------------------------------
 
-  // Parsed alert fields (table layout): the colour group of each field and its name on the page.
-  const AF_GROUP = { client_name: "client", client_id: "client", environment: "env", environment_code: "env",
-                     alert_name: "type", open_date: "date", server: "server", backup_server: "server",
-                     database: "client", environment_note: "env", backup_type: "type", latest_backup: "date" };
+  // Parsed alert fields (every layout): the colour group of each field and its name on the page. Fields
+  // not listed are in the "other" group, coloured like dates.
+  const AF_GROUP = {
+    client_name: "client", client_id: "client", database: "client", databases: "client",
+    environment: "env", collector: "env", environment_note: "env", env: "env", job: "env", region: "env",
+    alert_name: "type", backup_type: "type", severity: "type", level: "type", previous_level: "type", metric: "type",
+    open_date: "date", close_date: "date", latest_backup: "date", first_occurrence: "date", last_occurrence: "date",
+    report_creation_time: "date",
+    server: "server", backup_server: "server", hosts: "server", instance: "server", db_instance: "server",
+    target: "server", instancenames: "server" };
   const AF_NAME = { client_name: "client name", client_id: "client id", environment: "environment name",
-                    environment_code: "environment code", alert_name: "alert type", open_date: "open date (UTC)",
-                    latest_backup: "latest backup date", hours_without: "hours without backup",
-                    minutes_without: "minutes without backup", backup_server: "latest backup server" };
+                    collector: "collector machine", alert_name: "alert type", open_date: "open date",
+                    close_date: "close date", latest_backup: "latest backup date", hours_without: "hours without backup",
+                    minutes_without: "minutes without backup", backup_server: "latest backup server",
+                    db_instance: "DB instance", instancenames: "instance names" };
   const afName = f => AF_NAME[f] || human(f);
+  // Free-text fields are not highlighted, as they can hold other fields (ServerName: in a message)
+  const AF_FREE_TEXT = new Set(["message", "description", "recommendations", "summary"]);
 
   function highlighted(text, dets, field, alertSpans) {
     const detSpans = dets.map((d, i) => ({ ...d, i, det: true })).filter(d => d.field === field);
-    // Alert fields are highlighted unless a detection covers the same text; the message is not, as its
-    // own "Label: value" parts are.
-    const afSpans = (alertSpans || []).filter(s => (s.in || "description") === field && s.field !== "message"
+    // Alert fields are highlighted unless a detection covers the same text
+    const afSpans = (alertSpans || []).filter(s => (s.in || "description") === field && !AF_FREE_TEXT.has(s.field)
       && !detSpans.some(d => d.start < s.end && s.start < d.end));
     const spans = [...detSpans, ...afSpans].sort((a, b) => a.start - b.start);
     const out = []; let pos = 0;
@@ -288,6 +308,8 @@
     const summary = el("section", { class: "card" }, el("h2", {}, "Result"),
       el("dl", { class: "fields" },
         t.source === "zendesk_api" ? [el("dt", {}, "Ticket"), el("dd", {}, `#${t.ticket_id}` + (t.created_at ? ` · ${t.created_at}` : ""))] : null,
+        r.alert_type ? [el("dt", {}, "Alert type"), el("dd", {}, `${r.alert_type.alert_type} (${human(r.alert_type.layout)} layout) · ` +
+          `${r.alert_type.alerts.toLocaleString()} alerts at ${r.alert_type.clients} clients · example ticket #${t.ticket_id}`)] : null,
         el("dt", {}, "Client"), el("dd", {}, client),
         el("dt", {}, "Read as"), el("dd", {}, r.is_alert ? chip("alert", "alert") : chip("human ticket")),
         el("dt", {}, "Thresholds"), el("dd", {}, `host ${r.thresholds.host.toFixed(2)} · instance ${r.thresholds.instance.toFixed(2)}`),
@@ -306,14 +328,15 @@
     const legend = el("div", { class: "legend" }, el("mark", { class: "host" }, "host"),
       el("mark", { class: "host_instance" }, "HOST\\INSTANCE"), el("mark", { class: "bare_instance" }, "bare instance"),
       spans.length ? [el("mark", { class: "af af-client" }, "client or database"), el("mark", { class: "af af-env" }, "environment"),
-        el("mark", { class: "af af-type" }, "alert or backup type"), el("mark", { class: "af af-date" }, "date and other alert fields")] : null);
+        el("mark", { class: "af af-type" }, "alert or backup type"), el("mark", { class: "af af-date" }, "date and other alert fields"),
+        el("mark", { class: "af af-server" }, "alert server")] : null);
     const textCard = el("section", { class: "card" }, el("h2", {}, "Text"), legend,
       t.subject ? el("pre", { class: "text" }, el("strong", {}, highlighted(t.subject, dets, "subject", spans))) : null,
       el("pre", { class: "text" }, t.description ? highlighted(t.description, dets, "description", spans) : el("span", { class: "stats" }, "No description.")));
     const af = r.alert_fields || {};
     const afKeys = Object.keys(af).filter(k => k !== "family" && k !== "layout");
     const fieldsCard = afKeys.length ? el("section", { class: "card" },
-      el("h2", {}, `Alert fields (${af.family || "alert"}${af.layout ? `, ${af.layout} layout` : ""})`),
+      el("h2", {}, `Alert fields (${af.family || "alert"}${af.layout ? `, ${human(af.layout)} layout` : ""})`),
       el("dl", { class: "fields" }, afKeys.flatMap(k => [el("dt", {}, afName(k)), el("dd", { class: "mono" }, af[k])]))) : null;
 
     const detRows = dets.map((d, i) => el("tr", { class: "clickable", onclick: () => jumpTo(i), title: "Show in the text" },
@@ -599,10 +622,48 @@
     else if (k === "enter" && !e.target.closest("button")) { e.preventDefault(); saveLabel("done"); }
   }
 
+  // --- Alert types -----------------------------------------------------------------
+  // One example per alert type (layout and alert name) in the ticket files, for checking which types
+  // the parser reads. Clicking a row analyzes that type's example.
+
+  let TYPES = [], TYPE_SEL = "";
+
+  async function loadTypes() {
+    try {
+      TYPES = (await post("/api/alert-types", {})).types;
+    } catch (e) { setError(e.message); return; }
+    const layouts = [...new Set(TYPES.map(x => x.layout))];
+    $("types-layout").replaceChildren(el("option", { value: "" }, "All layouts"),
+      ...layouts.map(l => el("option", { value: l }, `${human(l)} (${TYPES.filter(x => x.layout === l).length})`)));
+    renderTypes();
+  }
+
+  function renderTypes() {
+    const q = $("types-filter").value.trim().toLowerCase(), lay = $("types-layout").value;
+    const shown = TYPES.filter(x => (!lay || x.layout === lay) &&
+      (!q || x.alert_type.toLowerCase().includes(q) || x.layout.toLowerCase().includes(q)));
+    const alerts = shown.reduce((n, x) => n + x.alerts, 0);
+    $("types-note").textContent = `${shown.length} of ${TYPES.length} alert types, ${alerts.toLocaleString()} alerts. ` +
+      "Fields: parsed fields in the example beyond the family and layout; few or none means the type still needs a parser.";
+    const rows = shown.map(x => el("tr", { class: "clickable" + (x.key === TYPE_SEL ? " sel" : ""), title: "Show an example",
+        onclick: () => openType(x.key) },
+      el("td", {}, human(x.layout)), el("td", {}, x.alert_type), el("td", { class: "num" }, x.alerts.toLocaleString()),
+      el("td", { class: "num" }, x.clients), el("td", { class: "num" }, pct(x.with_server)),
+      el("td", { class: "num" }, x.example_fields)));
+    $("types-list").replaceChildren(el("table", {},
+      el("thead", {}, el("tr", {}, ["Layout", "Alert type", "Alerts", "Clients", "With a server", "Fields"].map(h => el("th", {}, h)))),
+      el("tbody", {}, rows)));
+  }
+
+  function openType(key) {
+    TYPE_SEL = key; renderTypes();
+    run("/api/alert-types/example", { key }, null);
+  }
+
   // --- Setup ---------------------------------------------------------------------
 
   function selectTab(which) {
-    for (const name of ["text", "zendesk", "label"]) {
+    for (const name of ["text", "zendesk", "label", "types"]) {
       const on = name === which;
       $(`tab-${name}`).setAttribute("aria-selected", String(on));
       $(`panel-${name}`).hidden = !on;
@@ -625,6 +686,9 @@
     $("tab-text").addEventListener("click", () => selectTab("text"));
     $("tab-zendesk").addEventListener("click", () => selectTab("zendesk"));
     $("tab-label").addEventListener("click", () => selectTab("label"));
+    $("tab-types").addEventListener("click", () => { selectTab("types"); if (!TYPES.length) loadTypes(); });
+    $("types-filter").addEventListener("input", renderTypes);
+    $("types-layout").addEventListener("change", renderTypes);
     $("label-start").addEventListener("click", startLabeling);
     $("labeler-name").addEventListener("keydown", e => { if (e.key === "Enter") startLabeling(); });
     $("label-mine").addEventListener("change", e => { if (e.target.value) labelOpen(e.target.value); e.target.value = ""; });
@@ -652,6 +716,11 @@
       $("tab-label").hidden = false;
       $("tab-label").textContent = `Label tickets (${INFO.labeling.sample})`;
       if (location.hash === "#label") selectTab("label");
+    }
+    if (INFO.alert_types) {
+      $("tab-types").hidden = false;
+      $("tab-types").textContent = `Alert types (${INFO.alert_types})`;
+      if (location.hash === "#alert-types") { selectTab("types"); loadTypes(); }
     }
   }
   init();
