@@ -136,7 +136,7 @@ A file opened in the page carries no run results.
 | --limit N | all | Only the first N tickets in the file |
 | --model ID | claude-opus-5-5 | Model, e.g. claude-sonnet-5-5 or claude-haiku-5-5 |
 | --effort LEVEL | low | low, medium, high, xhigh or max |
-| --prompt-version V | v1 | Uses prompts/classify_V.md |
+| --prompt-version V | v2 | Uses prompts/classify_V.md (v1 was written for taxonomy v0) |
 | --run-name NAME | model family + prompt version, e.g. opus-v1 (effort appended when not low) | Output folder under data/runs |
 | --workers N | 4 | Parallel API calls |
 | --max-tokens N | 8000 | Output limit per call; thinking counts toward it |
@@ -191,6 +191,15 @@ is redundant with zendesk_type. Options: --targets, --min-count, --sizes,
 --max-chars, --seed, --train, --test. The report goes to
 data/reports/baseline-<timestamp>.md; the console shows metrics only. It runs
 locally and sends nothing to any service.
+
+    python baseline.py --labels data\claude_pack\returned\taxonomy_sample_labels.jsonl
+
+With --labels, it predicts a label file's primary_type and intent instead,
+with stratified cross-validation (--folds, 5) over the labeled tickets found in
+--train and --test, merging classes with fewer than --label-min-count (5)
+tickets. Scores are split by the labeler's own confidence. It shows how well a
+taxonomy's classes separate from the ticket text alone. Report:
+data/reports/baseline-labels-<timestamp>.md.
 
 `split_alerts.py` splits a DW2.0 .csv export or a .jsonl ticket file by its
 is_alert column into <name>_alerts and <name>_human files of the same format
@@ -325,7 +334,17 @@ status and score, and shows every candidate with its host and instance
 probabilities. Changing a threshold re-scores the current text without
 fetching it again. The How it works tab (`#how`) walks through the layers
 (tokenizing, candidate filter, dictionary pass, rules, model, resolution)
-with a made-up example ticket and the dictionary pass's holdout results. Text and tickets stay in memory and on the page; the
+with a made-up example ticket and the dictionary pass's holdout results.
+The Taxonomy tab (`#taxonomy`) lists the types and intents with their
+definitions, Claude's sample label counts, the alert tickets the alert-name
+table maps to each type, and the rules for choosing the primary type. The
+Classify ticket tab (`#classify`) applies the taxonomy to pasted text locally
+with `ticket_types.py`: a parsed alert takes its type from the alert-name
+table in data/claude_pack/returned/taxonomy_notes.md (and intent
+fix_incident, or provide_information when it says the condition cleared);
+anything else is scored by TF-IDF and logistic regression trained on
+Claude's 600 sample labels. The model is trained on first start and saved to
+data/models/ticket_types.joblib; `python ticket_types.py train` refits it. Text and tickets stay in memory and on the page; the
 console logs request paths only. Options: --port, --model-path, --train (read
 for client names) and --open.
 
@@ -401,8 +420,12 @@ overwritten. Reports are written to data/reports/.
 
 ## Files that carry forward to Keystone
 
-- taxonomy.json: versioned type and intent lists (v0 is a draft for the
-  taxonomy workshop)
+- taxonomy.json: versioned type and intent lists. v1-draft (20 types, 7
+  intents) was proposed by Claude from a digest of all 12,000 tickets
+  (docs/claude-taxonomy-prompt.md) and awaits team review; its notes, with
+  the Zendesk category and alert name mappings, are in
+  data/claude_pack/returned/taxonomy_notes.md. taxonomy_v0.json keeps the
+  earlier draft for comparison.
 - prompts/classify_v*.md: versioned system prompts and user message templates
 - schema.py: output schema generated from the taxonomy
 - data/labels.csv: the start of the evaluation set (contains client data;

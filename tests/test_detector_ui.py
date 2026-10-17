@@ -159,6 +159,24 @@ def test_page_explains_the_layers_with_a_made_up_example():
         assert f'"{rule}"' in source
 
 
+def test_taxonomy_and_classify_routes():
+    import pytest
+    import ticket_types as tt
+    from tests.test_ticket_types import labeled
+    a = app()
+    with pytest.raises(ValueError):  # no type model loaded
+        a.classify_text({"text": "x"})
+    a.types = tt.train(*labeled())
+    assert a.taxonomy({})["sample_tickets"] == 36
+    r = a.classify_text({"subject": "Disk", "text": "disk space low on the data drive"})
+    assert r["primary_type"] == "capacity_storage"
+    with pytest.raises(ValueError):
+        a.classify_text({"text": "  "})
+    html = ui.PAGE_PATH.read_text(encoding="utf-8")
+    for needle in ('id="tab-tax"', 'id="tab-cls"', 'id="tab-flow"', "renderFlow", "/api/taxonomy", "/api/classify"):
+        assert needle in html
+
+
 def test_alert_catalog_has_one_example_per_type():
     from tests.test_alert_layouts import LABELED, MARKDOWN
     tickets = [make_ticket(i, f"Alert #{i} - FD - SQL Agent Job Failure", LABELED + "x" * i, organization_id=str(i % 2),

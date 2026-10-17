@@ -28,6 +28,7 @@ import requests
 
 import server_detector as sd
 import server_labels as sl
+import ticket_types as tt
 from alert_parser import alert_spans, parse_alert
 from common import DATA_DIR, ZendeskClient, load_env, make_ticket, now_iso, read_jsonl
 
@@ -215,9 +216,10 @@ def fetch_ticket(zd: ZendeskClient, ticket_id: str) -> dict:
 class App:
     def __init__(self, bundle: dict, names: dict[str, str], zendesk: ZendeskClient | None, subdomain: str | None,
                  port: int, queue: sl.LabelQueue | None = None, allowed_hosts: set[str] | None = None,
-                 catalog: list[dict] | None = None):
+                 catalog: list[dict] | None = None, types: dict | None = None, alert_map: dict | None = None):
         self.bundle, self.names, self.zendesk, self.subdomain, self.port = bundle, names, zendesk, subdomain, port
         self.queue = queue
+        self.types, self.alert_map = types, alert_map or {}
         self.catalog = {c["key"]: c for c in catalog or []}
         self.allowed_hosts = allowed_hosts or {f"127.0.0.1:{port}", f"localhost:{port}"}
 
@@ -323,7 +325,26 @@ class App:
                 "directory": directory.stats(), "zendesk": self.subdomain if self.zendesk else None,
                 "labeling": {"sample": len(self.queue.order), "overlap": self.queue.progress()["overlap_tickets"]}
                 if self.queue else None,
-                "alert_types": len(self.catalog)}
+                "alert_types": len(self.catalog),
+                "ticket_types": {"tickets": self.types["tickets"], "created_at": self.types.get("created_at"),
+                                 "alert_names": len(self.alert_map)} if self.types else None}
+
+    # --- Taxonomy ----------------------------------------------------------------
+
+    def taxonomy(self, body: dict) -> dict:
+        return tt.summary(self.types, self.alert_map)
+
+    def classify_text(self, body: dict) -> dict:
+        """The taxonomy type and intent for pasted text: the alert-name table for alerts, else the
+        local model. The text is not stored."""
+        if not self.types:
+            raise ValueError(f"The Classify tab needs Claude's sample labels at {tt.LABELS_PATH}")
+        text, subject = str(body.get("text") or ""), str(body.get("subject") or "")
+        if not (text.strip() or subject.strip()):
+            raise ValueError("Paste some text first")
+        if len(text) + len(subject) > MAX_TEXT:
+            raise ValueError(f"Text is longer than {MAX_TEXT:,} characters")
+        return tt.classify(subject, text, self.types, self.alert_map)
 
     def analyze_text(self, body: dict) -> dict:
         text, subject = str(body.get("text") or ""), str(body.get("subject") or "")
@@ -412,7 +433,8 @@ def make_handler(app: App):
             routes = {"/api/analyze": app.analyze_text, "/api/zendesk": app.analyze_zendesk,
                       "/api/label/next": app.label_next, "/api/label/open": app.label_open,
                       "/api/label/save": app.label_save, "/api/label/mine": app.label_mine,
-                      "/api/alert-types": app.alert_types, "/api/alert-types/example": app.alert_example}
+                      "/api/alert-types": app.alert_types, "/api/alert-types/example": app.alert_example,
+                      "/api/taxonomy": app.taxonomy, "/api/classify": app.classify_text}
             route = routes.get(self.path.split("?")[0])
             if not route:
                 return self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
@@ -455,7 +477,8 @@ def allowed_host_names(host: str, port: int, extra: list[str]) -> set[str]:
 def make_app(model_path: Path, train_path: Path, port: int, *, zendesk_mode: str = "auto", network: bool = False,
              label_tickets: Path | None = None, label_sample: int = 200, label_kind: str = "human",
              label_overlap: float = 0.15, label_seed: int = 0, labels_path: Path = sl.LABELS_PATH,
-             allowed_hosts: set[str] | None = None, alert_tickets: list[Path] | None = None) -> App:
+             allowed_hosts: set[str] | None = None, alert_tickets: list[Path] | None = None,
+             types_path: Path | None = None) -> App:
     if not model_path.exists():
         raise SystemExit(f"No model at {model_path}. Run: python server_detector.py train")
     bundle = joblib.load(model_path)
@@ -479,9 +502,13 @@ def make_app(model_path: Path, train_path: Path, port: int, *, zendesk_mode: str
     else:
         print(f"Labeling is off: {label_tickets} was not found")
     found = [p for p in alert_tickets or [] if p.exists()]
-    catalog = alert_catalog([t for p in found for t in read_jsonl(p)])
+    tickets = [t for p in found for t in read_jsonl(p)]
+    catalog = alert_catalog(tickets)
     print(f"Alert types: {len(catalog)} types from {', '.join(p.name for p in found) or 'no ticket files'}")
-    return App(bundle, names, zendesk, subdomain, port, queue, allowed_hosts, catalog)
+    types = tt.load_or_train(types_path or tt.MODEL_PATH, tickets=tickets)
+    alert_map = tt.load_alert_map()
+    print(f"Taxonomy {tt.TAXONOMY_VERSION}: {len(alert_map)} alert names in the alert table")
+    return App(bundle, names, zendesk, subdomain, port, queue, allowed_hosts, catalog, types, alert_map)
 
 
 def main():

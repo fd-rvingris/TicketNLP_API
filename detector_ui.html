@@ -29,6 +29,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }  /* .row and .card set display, which would override hidden */
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); }
   button, input, select, textarea { font: inherit; color: inherit; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -146,6 +147,19 @@
   .path b { font-family: var(--mono); font-size: 12px; color: var(--c); }
   .how pre.out { margin: 0; font: 12px/1.6 var(--mono); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; background: var(--bg); overflow-x: auto; }
   .src-bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--c); vertical-align: middle; margin-right: 6px; }
+  /* Taxonomy and Classify */
+  .tax { display: grid; gap: 14px; }
+  .tax td.def { max-width: 70ch; color: var(--fg); }
+  .tax td.id, .cls-id { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+  .tax ol { margin: 0; padding-left: 20px; display: grid; gap: 3px; max-width: 100ch; }
+  .verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .verdict .card { gap: 6px; }
+  .verdict .big { font-size: 18px; font-weight: 600; }
+  .cand { display: grid; grid-template-columns: minmax(0, 1fr) 140px 52px; gap: 8px; align-items: center; font-size: 13px; }
+  .cand .track { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .cand .fill { height: 100%; background: var(--accent); }
+  .cand .p { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .note { background: var(--alert-soft); color: var(--fg); border-radius: 4px; padding: 6px 10px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -161,6 +175,98 @@
       <button type="button" role="tab" id="tab-label" aria-selected="false" aria-controls="panel-label" hidden>Label tickets</button>
       <button type="button" role="tab" id="tab-types" aria-selected="false" aria-controls="panel-types" hidden>Alert types</button>
       <button type="button" role="tab" id="tab-how" aria-selected="false" aria-controls="panel-how">How it works</button>
+      <button type="button" role="tab" id="tab-tax" aria-selected="false" aria-controls="panel-tax">Taxonomy</button>
+      <button type="button" role="tab" id="tab-cls" aria-selected="false" aria-controls="panel-cls">Classify ticket</button>
+      <button type="button" role="tab" id="tab-flow" aria-selected="false" aria-controls="panel-flow">How types are chosen</button>
+    </div>
+    <div id="panel-flow" role="tabpanel" aria-labelledby="tab-flow" hidden style="display:none; gap:8px">
+      <div class="how">
+        <p>The Classify ticket tab gives every ticket one primary type and one intent from the taxonomy. Alerts are typed by their alert name, because alerts are templated; everything else is typed by a local model that learned from tickets Claude labeled. Nothing is sent to an API.</p>
+        <div class="how-legend">
+          <span class="l-in"><i></i>Input</span>
+          <span class="l-dict"><i></i>Alert-name table</span>
+          <span class="l-model"><i></i>Local model</span>
+          <span class="l-rule"><i></i>Intent rule</span>
+          <span class="l-res"><i></i>Result</span>
+        </div>
+        <ol class="pipe">
+          <li class="stage l-in"><div class="node">1</div><div class="layer">
+            <div class="layer-head"><h3>Read the ticket</h3></div>
+            <p>The subject and the body, as pasted. The model reads the subject and the first 8,000 characters of the body.</p>
+          </div></li>
+          <li class="stage l-in"><div class="node">2</div><div class="layer">
+            <div class="layer-head"><h3>Is it an alert?</h3><span class="chip">alert_parser.py</span></div>
+            <p>The alert parser checks the text against the known alert layouts: the collector's table, labeled and Markdown layouts, Grafana firing alerts, backup exception reports and volume capacity checks. If one matches, it reads the alert's family and alert name (for example <code>collector</code> and <code>Long-Running Blocking Chain</code>). If none matches, the ticket goes to the model (step 4).</p>
+          </div></li>
+          <li class="stage l-dict"><div class="node">3</div><div class="layer">
+            <div class="layer-head"><h3>Look up the alert name</h3><span class="chip">74 alert names, 6,000 alert tickets</span></div>
+            <p>The pair (family, alert name) is looked up in the alert-name table from the taxonomy notes. The table says how far the name alone decides the type:</p>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Name decides</th><th>What happens</th><th class="num">Alert names</th></tr></thead>
+              <tbody>
+                <tr><td>Yes</td><td>The table's type is the answer.</td><td class="num">63</td></tr>
+                <tr><td>Partly</td><td>The table's type is used, with a note that the body can move it. For example, an SQL Agent job failure is scheduled_jobs, but a failed DatabaseBackup job belongs in backup_restore. The page shows the note; it does not apply it.</td><td class="num">6</td></tr>
+                <tr><td>No</td><td>The table's default is used with a warning, because the name names no condition. The largest is <code>errors</code> (2,142 tickets), defaulted to monitoring_tooling until someone checks what those alerts contain.</td><td class="num">5</td></tr>
+                <tr><td>Not in the table</td><td>The model decides (step 4), with a warning that it learned from human tickets only.</td><td class="num">–</td></tr>
+              </tbody>
+            </table></div>
+          </div></li>
+          <li class="stage l-model"><div class="node">4</div><div class="layer">
+            <div class="layer-head"><h3>Score with the local model</h3><span class="chip">ticket_types.py</span></div>
+            <ul>
+              <li><b>Features:</b> word and two-word phrases (TF-IDF) from the subject and from the body, kept separate.</li>
+              <li><b>Model:</b> logistic regression, one for the type and one for the intent. It shows its top three of each with probabilities, so a close second choice is visible.</li>
+              <li><b>Training data:</b> Claude's labels on 600 human tickets sampled across the Zendesk categories. Claude applied the selection rules below when labeling; the model learns them only from those examples.</li>
+            </ul>
+          </div></li>
+          <li class="stage l-rule"><div class="node">5</div><div class="layer">
+            <div class="layer-head"><h3>Set the intent</h3></div>
+            <ul>
+              <li><b>Alerts:</b> fix_incident, or provide_information when the alert says the condition cleared, resolved, succeeded or recovered.</li>
+              <li><b>Everything else:</b> the model's intent.</li>
+            </ul>
+          </div></li>
+          <li class="stage l-res"><div class="node">6</div><div class="layer">
+            <div class="layer-head"><h3>Show the result</h3></div>
+            <p>The primary type and intent with their definitions, where each came from (alert-name table or model), the model's top three, and for an alert, the table entry it matched.</p>
+          </div></li>
+        </ol>
+
+        <h3>The selection rules</h3>
+        <p class="meta">How a primary type is chosen when a ticket touches several areas. Claude labeled the training tickets with these rules, and classify.py (prompt v2) gives them to the LLM classifier when an API key is available.</p>
+        <ol id="flow-rules" class="help" style="margin:0; padding-left:20px; display:grid; gap:3px"></ol>
+
+        <h3>How accurate is it?</h3>
+        <p class="meta">Measured 2026-10-17 with 5-fold cross-validation on the 600 labeled human tickets (python baseline.py --labels ...). Alerts are not in this measure; their accuracy depends on the alert-name table.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th></th><th class="num">Accuracy</th><th class="num">Macro F1</th><th class="num">Always guessing the most common</th></tr></thead>
+          <tbody>
+            <tr><td>Type</td><td class="num">73.3%</td><td class="num">65.1%</td><td class="num">11.3%</td></tr>
+            <tr><td>Intent</td><td class="num">83.2%</td><td class="num">67.6%</td><td class="num">34.7%</td></tr>
+          </tbody>
+        </table></div>
+        <p class="meta">Reliable: staff_access, service_admin, assessment_review, capacity_storage, backup_restore. Weak: engine_errors, data_request_query, configuration_change, install_migrate_upgrade, database_refresh, which have few training examples. Where Claude itself was less than confident, the model is right 55% of the time.</p>
+
+        <h3>Try it</h3>
+        <p class="meta">Made-up examples. Each opens the Classify ticket tab with the text filled in.</p>
+        <div class="row" id="flow-examples"></div>
+      </div>
+    </div>
+    <div id="panel-tax" role="tabpanel" aria-labelledby="tab-tax" hidden style="display:none; gap:8px">
+      <div class="tax" id="tax-view"><span class="meta">Loading the taxonomy…</span></div>
+    </div>
+    <div id="panel-cls" role="tabpanel" aria-labelledby="tab-cls" hidden style="display:none; gap:8px">
+      <div class="row">
+        <label class="grow">Subject<input type="text" id="cls-subject" placeholder="The ticket or alert subject"></label>
+      </div>
+      <textarea id="cls-text" placeholder="Paste the ticket or alert body here. Alerts take their type from the taxonomy's alert-name table; other tickets are scored by a local model trained on Claude's 600 labeled tickets. Nothing is sent anywhere."></textarea>
+      <div class="row">
+        <button type="button" class="primary" id="cls-run">Classify</button>
+        <span class="meta"><span class="kbd">Ctrl</span>+<span class="kbd">Enter</span> to classify</span>
+        <span class="meta" id="cls-meta"></span>
+      </div>
+      <div id="cls-error" class="error" role="alert" hidden></div>
+      <div id="cls-result" aria-live="polite"></div>
     </div>
     <div id="panel-text" role="tabpanel" aria-labelledby="tab-text" style="display:grid; gap:8px">
       <div class="row">
@@ -290,14 +396,14 @@
         </div>
 
         <h3>What the dictionary pass changed</h3>
-        <p class="meta">Measured 2026-10-17 on 200 Claude-labeled tickets held out of training; both versions trained fresh with the same settings. The instance rows rest on 10 labeled mentions, so they show direction, not a rate. Measured before two later adjustments (the upper-case known-instance rule restored, and frequent-word confirmed hosts kept only after a server word); to be refreshed after retraining.</p>
+        <p class="meta">Measured 2026-10-17 on 200 Claude-labeled tickets held out of training; both versions trained fresh with the same settings. The instance rows rest on 10 labeled mentions, so they show direction, not a rate. On the 2,000-ticket test file, human-ticket host precision rose from 72.3% to 75.9% and recall from 56.1% to 61.1%; recall on unseen hosts in human tickets fell from 75.2% to 70.7%.</p>
         <div class="table-wrap"><table>
           <thead><tr><th>Measure</th><th class="num">Before</th><th class="num">After</th></tr></thead>
           <tbody>
-            <tr><td>Host precision</td><td class="num">51.8% (215/415)</td><td class="num">64.8% (214/330)</td></tr>
+            <tr><td>Host precision</td><td class="num">51.8% (215/415)</td><td class="num">65.0% (214/329)</td></tr>
             <tr><td>Host recall</td><td class="num">89.2% (215/241)</td><td class="num">88.8% (214/241)</td></tr>
             <tr><td>Host recall, new names</td><td class="num">45.2% (19/42)</td><td class="num">42.9% (18/42)</td></tr>
-            <tr><td>Instance precision</td><td class="num">19.0% (4/21)</td><td class="num">38.1% (8/21)</td></tr>
+            <tr><td>Instance precision</td><td class="num">19.0% (4/21)</td><td class="num">27.6% (8/29)</td></tr>
             <tr><td>Instance recall</td><td class="num">40.0% (4/10)</td><td class="num">80.0% (8/10)</td></tr>
           </tbody>
         </table></div>
@@ -916,18 +1022,131 @@
     }
   }
 
+  // --- Taxonomy and Classify -----------------------------------------------------------
+
+  let TAX = null;
+  const SOURCE_TEXT = {
+    model: "local model (trained on Claude's labeled human tickets)",
+    alert_name: "alert-name table: the name decides",
+    alert_name_partly: "alert-name table: the body can change it",
+    alert_default: "alert-name table: default, the name does not decide",
+    alert_rule: "alert rule: fix_incident unless the alert says it cleared",
+  };
+  const entryOf = (kind, id) => (TAX && TAX[kind].find(t => t.id === id)) || { id, label: id, definition: "" };
+
+  async function loadTaxonomy() {
+    if (TAX) return TAX;
+    try { TAX = await post("/api/taxonomy", {}); } catch (e) { $("tax-view").replaceChildren(el("div", { class: "error" }, e.message)); return null; }
+    renderTaxonomy();
+    return TAX;
+  }
+
+  function countCell(n, max, cls) {
+    return el("td", { class: "num" }, n ? n.toLocaleString() : "–",
+      n ? el("span", { class: "bar" + (cls ? " " + cls : ""), style: `width:${Math.max(2, Math.round(n / max * 60))}px` }) : null);
+  }
+
+  function renderTaxonomy() {
+    const t = TAX, maxS = Math.max(1, ...t.types.map(x => x.sample)), maxA = Math.max(1, ...t.types.map(x => x.alert_tickets));
+    const maxI = Math.max(1, ...t.intents.map(x => x.sample));
+    $("tax-view").replaceChildren(
+      el("p", { class: "meta" }, `Taxonomy ${t.version}: ${t.types.length} types and ${t.intents.length} intents. `
+        + `'Sample' counts Claude's labels on ${t.sample_tickets.toLocaleString()} human tickets; 'Alerts' counts the alert tickets `
+        + `the alert-name table (${t.alert_names} names, ${t.alert_table_tickets.toLocaleString()} tickets) maps to each type.`),
+      el("div", { class: "card" }, el("h2", {}, "Ticket types"),
+        el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {}, el("th", {}, "Type"), el("th", {}, "Label"), el("th", {}, "Definition"),
+            el("th", { class: "num" }, "Sample"), el("th", { class: "num" }, "Alerts"))),
+          el("tbody", {}, t.types.map(x => el("tr", {}, el("td", { class: "id" }, x.id), el("td", {}, x.label),
+            el("td", { class: "def" }, x.definition), countCell(x.sample, maxS), countCell(x.alert_tickets, maxA, "inst"))))))),
+      el("div", { class: "card" }, el("h2", {}, "Intents"),
+        el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {}, el("th", {}, "Intent"), el("th", {}, "Label"), el("th", {}, "Definition"), el("th", { class: "num" }, "Sample"))),
+          el("tbody", {}, t.intents.map(x => el("tr", {}, el("td", { class: "id" }, x.id), el("td", {}, x.label),
+            el("td", { class: "def" }, x.definition), countCell(x.sample, maxI))))))),
+      t.rules.length ? el("div", { class: "card" }, el("h2", {}, "Choosing the primary type"),
+        el("ol", {}, t.rules.map(r => el("li", {}, r)))) : null);
+  }
+
+  function candidates(list, kind) {
+    return el("div", { style: "display:grid; gap:4px" }, list.map(c => el("div", { class: "cand" },
+      el("span", {}, el("span", { class: "cls-id" }, c.id), " ", el("span", { class: "meta" }, entryOf(kind, c.id).label)),
+      el("span", { class: "track" }, el("span", { class: "fill", style: `display:block; width:${Math.round(c.p * 100)}%` })),
+      el("span", { class: "p" }, pct(c.p)))));
+  }
+
+  async function classifyTicket() {
+    const text = $("cls-text").value, subject = $("cls-subject").value;
+    $("cls-error").hidden = true;
+    $("cls-run").disabled = true;
+    try {
+      await loadTaxonomy();
+      const r = await post("/api/classify", { text, subject });
+      const type = entryOf("types", r.primary_type), intent = entryOf("intents", r.intent);
+      const a = r.alert;
+      $("cls-result").replaceChildren(el("div", { class: "verdict" },
+        el("section", { class: "card" }, el("h2", {}, "Primary type"),
+          el("div", { class: "big" }, type.label, " ", el("span", { class: "cls-id meta" }, r.primary_type)),
+          el("div", { class: "meta" }, "From the " + (SOURCE_TEXT[r.type_source] || r.type_source)),
+          el("div", { class: "help" }, type.definition),
+          el("h2", {}, "Model's top types"), candidates(r.type_candidates, "types")),
+        el("section", { class: "card" }, el("h2", {}, "Intent"),
+          el("div", { class: "big" }, intent.label, " ", el("span", { class: "cls-id meta" }, r.intent)),
+          el("div", { class: "meta" }, "From the " + (SOURCE_TEXT[r.intent_source] || r.intent_source)),
+          el("div", { class: "help" }, intent.definition),
+          el("h2", {}, "Model's top intents"), candidates(r.intent_candidates, "intents")),
+        el("section", { class: "card" }, el("h2", {}, "Alert"),
+          a ? el("dl", { class: "fields" },
+                el("dt", {}, "Family"), el("dd", {}, a.family), el("dt", {}, "Layout"), el("dd", {}, a.layout || "–"),
+                el("dt", {}, "Alert name"), el("dd", {}, a.alert_name || "(blank)"),
+                el("dt", {}, "In the table"), el("dd", {}, a.entry ? `yes: ${a.entry.type}, name decides: ${a.entry.decides} (${a.entry.tickets.toLocaleString()} tickets)` : "no"))
+            : el("div", { class: "meta" }, "Not an alert layout the parser knows, so the local model decides."),
+          r.notes.map(n => el("div", { class: "note" }, n)))));
+    } catch (e) {
+      $("cls-error").textContent = e.message; $("cls-error").hidden = false;
+    } finally {
+      $("cls-run").disabled = false;
+    }
+  }
+
+  // Made-up examples for the How types are chosen tab
+  const COLLECTOR_ALERT = name => `AlertId 123456\nAlert ${name}\nClient Name Example Client\nServer EXSQL01\n`
+    + "Platform Microsoft SQL Server\nInstance EXSQL01\nMessage The condition was detected.\nSeverity Warning\n"
+    + "Level Failure\nPreviousLevel OK\nOpen Date 07/21/2026 17:00:00 UTC\n";
+  const FLOW_EXAMPLES = [
+    ["Alert: name decides", "Example Client - Alert #42 - Long-Running Blocking Chain", COLLECTOR_ALERT("Long-Running Blocking Chain")],
+    ["Alert: body can change it", "Example Client - Alert #43 - FD - SQL Agent Job Failure", COLLECTOR_ALERT("FD - SQL Agent Job Failure")],
+    ["Client access request", "Please grant read access",
+     "Hi team, can you give the reporting service account db_datareader on the Sales database? Thanks."],
+    ["Patching notice", "Patching this weekend",
+     "Reminder: SQL Server cumulative updates will be applied to the production servers Saturday night."],
+  ];
+  let FLOW_READY = false;
+
+  async function renderFlow() {
+    if (FLOW_READY) return;
+    FLOW_READY = true;
+    $("flow-examples").replaceChildren(...FLOW_EXAMPLES.map(([label, subject, text]) => el("button", {
+      type: "button", class: "plain", onclick: () => {
+        $("cls-subject").value = subject; $("cls-text").value = text;
+        selectTab("cls"); classifyTicket();
+      } }, label)));
+    const tax = await loadTaxonomy();
+    $("flow-rules").replaceChildren(...(tax ? tax.rules : []).map(r => el("li", {}, r)));
+  }
+
   // --- Setup ---------------------------------------------------------------------
 
   function selectTab(which) {
-    for (const name of ["text", "zendesk", "label", "types", "how"]) {
+    for (const name of ["text", "zendesk", "label", "types", "how", "tax", "cls", "flow"]) {
       const on = name === which;
       $(`tab-${name}`).setAttribute("aria-selected", String(on));
       $(`panel-${name}`).hidden = !on;
       $(`panel-${name}`).style.display = on ? "grid" : "none";
     }
-    const labeling = which === "label";
-    $("th-row").hidden = labeling || which === "how";
-    $("results").hidden = labeling || which === "how";
+    const labeling = which === "label", ownView = ["how", "tax", "cls", "flow"].includes(which);
+    $("th-row").hidden = labeling || ownView;
+    $("results").hidden = labeling || ownView;
     $("label-view").hidden = !labeling || !LABEL.ticket;
     if (labeling && !LABEL.name && $("labeler-name").value) startLabeling();
   }
@@ -944,6 +1163,14 @@
     $("tab-label").addEventListener("click", () => selectTab("label"));
     $("tab-types").addEventListener("click", () => { selectTab("types"); if (!TYPES.length) loadTypes(); });
     $("tab-how").addEventListener("click", () => { selectTab("how"); renderHow(); });
+    $("tab-tax").addEventListener("click", () => { selectTab("tax"); loadTaxonomy(); });
+    $("tab-cls").addEventListener("click", () => { selectTab("cls"); loadTaxonomy(); });
+    $("tab-flow").addEventListener("click", () => { selectTab("flow"); renderFlow(); });
+    if (location.hash === "#how-types") { selectTab("flow"); renderFlow(); }
+    $("cls-run").addEventListener("click", classifyTicket);
+    $("cls-text").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) classifyTicket(); });
+    if (location.hash === "#taxonomy") { selectTab("tax"); loadTaxonomy(); }
+    if (location.hash === "#classify") { selectTab("cls"); loadTaxonomy(); }
     if (location.hash === "#how") { selectTab("how"); renderHow(); }
     $("types-filter").addEventListener("input", renderTypes);
     $("types-layout").addEventListener("change", renderTypes);
