@@ -61,7 +61,9 @@ DEFAULT_INSTANCE = "mssqlserver"  # stored as a host-level record, as match_ment
 # db01.corp.local, host,1433, tcp:host and MSSQL$INST survive as single tokens.
 TOKEN_RE = re.compile(r"[A-Za-z0-9_\\.\-,:$#]+")
 SENTENCE_RE = re.compile(r"[.!?](?=\s)|\n")
-CONN_RE = re.compile(r"(?i)\b(?:server|data\s+source|address|addr|network\s+address)\s*=\s*([^;'\"\r\n]+)")
+# The value ends at ; or a quote, as in a connection string, or at whitespace, since server names have
+# none: "Server=sql01,1433 is down" in prose marks sql01,1433 only, not the rest of the line.
+CONN_RE = re.compile(r"(?i)\b(?:server|data\s+source|address|addr|network\s+address)\s*=\s*([^;'\"\s]+)")
 SERVICE_RE = re.compile(r"(?i)^(mssql|sqlagent|sqlserveragent|reportserver|mssqlfdlauncher|sqltelemetry|msolap|"
                         r"mssqlserverolapservice|sqlwriter)\$([A-Za-z0-9_#\-]+)$")
 IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")

@@ -409,6 +409,17 @@ def test_rules_do_not_fire_on_ordinary_wording(text):
     assert sd.detect_servers(human(1, text), d, rules_only_model()) == []
 
 
+@pytest.mark.parametrize("text", [
+    "Server=fakesql31,1433 is down and nothing else is fine",
+    "Data Source = fakesql31,1433 then the job failed",
+    "use Server=fakesql31,1433; Database=x and see logs",
+])
+def test_connection_string_value_ends_at_whitespace(text):
+    d = sd.LocalServerDirectory.from_sources([], None)
+    found = [(x["text"], x["rule"]) for x in sd.detect_servers(human(1, text), d, rules_only_model())]
+    assert found == [("fakesql31,1433", "host:connection_string")]
+
+
 def test_frequent_words_next_to_instance_need_upper_case():
     d = sd.LocalServerDirectory.from_sources([], None)
     m = rules_only_model()
