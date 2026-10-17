@@ -17,7 +17,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_recall_fscore_support
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
 from sklearn.pipeline import Pipeline
 
 from common import DATA_DIR, REPORTS_DIR, fmt_pct, md_table, now_iso, read_jsonl
@@ -28,7 +28,7 @@ DEFAULT_SIZES = [500, 1000, 2000]
 SEGMENTS = ("all", "alerts", "human")
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--train", type=Path, default=DATA_DIR / "train_tickets.jsonl")
     p.add_argument("--test", type=Path, default=DATA_DIR / "test_tickets.jsonl")
@@ -38,7 +38,14 @@ def parse_args():
                    help="training sizes for the learning curve; the full training set is always added")
     p.add_argument("--max-chars", type=int, default=8000, help="description characters used per ticket")
     p.add_argument("--seed", type=int, default=0)
-    return p.parse_args()
+    p.add_argument("--labels", type=Path,
+                   help="a label file (ticket_id, primary_type, intent, confidence), such as "
+                        "data/claude_pack/returned/taxonomy_sample_labels.jsonl: predict its type and intent with "
+                        "cross-validation over the labeled tickets in --train and --test, instead of the weak labels")
+    p.add_argument("--folds", type=int, default=5, help="cross-validation folds for --labels")
+    p.add_argument("--label-min-count", type=int, default=5,
+                   help="with --labels, classes with fewer labeled tickets are merged")
+    return p.parse_args(argv)
 
 
 # --- Labels ----------------------------------------------------------------
@@ -179,6 +186,81 @@ def run_target(target: str, train: list[dict], test: list[dict], *, min_count: i
     return result
 
 
+LABEL_TARGETS = ("primary_type", "intent")
+
+
+def run_labeled(target: str, tickets: list[dict], labels: dict[str, dict], *, min_count: int, folds: int,
+                max_chars: int, seed: int) -> dict:
+    """Cross-validated predictions of one label field over the labeled tickets. Classes with fewer than
+    min_count tickets are merged. Scored overall and split by the label's own confidence."""
+    rows = [(t, labels[str(t["ticket_id"])]) for t in tickets if str(t["ticket_id"]) in labels]
+    raw = [lab[target] for _, lab in rows]
+    kept = kept_classes(raw, min_count)
+    y = [merge_label(v, kept) for v in raw]
+    X = features([t for t, _ in rows], max_chars)
+    cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
+    y_pred = list(cross_val_predict(build_model(seed), X, y, cv=cv))
+    conf = np.array([lab.get("confidence") == "high" for _, lab in rows])
+    masks = {"all": np.ones(len(rows), dtype=bool), "high confidence": conf, "medium or low": ~conf}
+    majority = Counter(y).most_common(1)[0][0]
+    return {"target": target, "tickets": len(rows), "classes_kept": sorted(kept),
+            "merged_values": sorted(set(raw) - kept), "merged_tickets": sum(1 for v in raw if v not in kept),
+            "majority_class": majority, "majority": score(y, [majority] * len(y), masks),
+            "model": score(y, y_pred, masks), "per_class": per_class(y, y_pred), "confusions": top_confusions(y, y_pred)}
+
+
+def render_labeled(results: list[dict], args, missing: int) -> str:
+    lines = [
+        "# Baseline on labeled tickets: TF-IDF and logistic regression", "",
+        f"Generated {now_iso()}. Labels {args.labels}; tickets from {args.train.name} and {args.test.name} "
+        f"({missing:,} labeled tickets not found in them). {args.folds}-fold stratified cross-validation, seed "
+        f"{args.seed}. Same features as the weak-label baseline. Classes with fewer than {args.label_min_count} "
+        f"labeled tickets are merged into {OTHER}.", "",
+        "This measures how well the label set's classes separate from the ticket text alone. It sets the bar an "
+        "LLM classifier should clear, and low per-class F1 points at types the text cannot tell apart.", "",
+    ]
+    for r in results:
+        merged = ", ".join(r["merged_values"]) or "none"
+        lines += [
+            f"## {r['target']}", "",
+            f"{r['tickets']:,} tickets, {len(r['classes_kept'])} classes. Merged ({r['merged_tickets']} tickets): "
+            f"{merged}. Majority class: {r['majority_class']}.", "",
+            md_table(["", *(f"{s} (n={r['model'][s]['n']:,})" for s in r["model"])],
+                     [[name, *(f"{fmt_pct(res[s]['accuracy'])} / {fmt_pct(res[s]['macro_f1'])}" for s in res)]
+                      for name, res in (("majority class", r["majority"]), ("model", r["model"]))]), "",
+            "Each cell is accuracy / macro F1. 'High confidence' uses the labeler's own confidence.", "",
+            "### Per class", "", per_class_table(r["per_class"]), "",
+        ]
+        if r["confusions"]:
+            lines += ["### Most common errors", "",
+                      md_table(["label", "predicted", "tickets"], [list(c) for c in r["confusions"]]), ""]
+    return "\n".join(lines)
+
+
+def main_labeled(args) -> None:
+    labels = {str(r["ticket_id"]): r for r in read_jsonl(args.labels) if r.get("ticket_id") is not None}
+    if not labels:
+        raise SystemExit(f"Missing or empty label file: {args.labels}")
+    tickets = read_jsonl(args.train) + read_jsonl(args.test)
+    found = {str(t["ticket_id"]) for t in tickets} & set(labels)
+    missing = len(labels) - len(found)
+    results = []
+    for target in LABEL_TARGETS:
+        r = run_labeled(target, tickets, labels, min_count=args.label_min_count, folds=args.folds,
+                        max_chars=args.max_chars, seed=args.seed)
+        results.append(r)
+        print(f"{target}: {r['tickets']:,} tickets, {len(r['classes_kept'])} classes  "
+              + "  ".join(f"{s} {fmt_pct(r['model'][s]['accuracy'])} / {fmt_pct(r['model'][s]['macro_f1'])}"
+                          for s in r["model"])
+              + f"  (majority {fmt_pct(r['majority']['all']['accuracy'])}; accuracy / macro F1)")
+    if missing:
+        print(f"{missing:,} labeled tickets were not in the ticket files")
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    path = REPORTS_DIR / f"baseline-labels-{datetime.now():%Y%m%d-%H%M%S}.md"
+    path.write_text(render_labeled(results, args, missing), encoding="utf-8")
+    print(f"Report: {path}")
+
+
 # --- Report ----------------------------------------------------------------
 
 
@@ -238,8 +320,11 @@ def render(results: list[dict], red: dict | None, args, train_n: int, test_n: in
     return "\n".join(lines)
 
 
-def main():
-    args = parse_args()
+def main(argv=None):
+    args = parse_args(argv)
+    if args.labels:
+        main_labeled(args)
+        return
     train, test = read_jsonl(args.train), read_jsonl(args.test)
     if not train or not test:
         raise SystemExit(f"Missing or empty ticket file: {args.train if not train else args.test}")

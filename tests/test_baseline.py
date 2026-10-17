@@ -96,3 +96,17 @@ def test_run_target_learns_separable_classes():
     assert final["alerts"]["n"] == 10 and final["human"]["n"] == 5
     assert {c["class"] for c in r["per_class"]} == {"Backups", "Security", "Storage"}
     assert set(r["per_class_by_segment"]) == {"alerts", "human"}
+
+
+def test_run_labeled_cross_validates_label_file_classes():
+    from baseline import run_labeled
+    tickets = synthetic(15)
+    texts = {"b": ("backup_restore", "fix_incident"), "d": ("capacity_storage", "fix_incident"),
+             "l": ("access_security", "request_change")}
+    labels = {t["ticket_id"]: {"ticket_id": t["ticket_id"], "primary_type": texts[t["ticket_id"][0]][0],
+                               "intent": texts[t["ticket_id"][0]][1], "confidence": "high"} for t in tickets}
+    labels["b0"]["primary_type"] = "other"  # a single-ticket class is merged
+    labels["extra"] = {"ticket_id": "extra", "primary_type": "performance", "intent": "fix_incident"}  # no ticket
+    r = run_labeled("primary_type", tickets, labels, min_count=5, folds=3, max_chars=1000, seed=0)
+    assert r["tickets"] == len(tickets) and r["merged_values"] == ["other"] and r["merged_tickets"] == 1
+    assert r["model"]["all"]["accuracy"] > 0.9 and r["model"]["medium or low"]["n"] == 0

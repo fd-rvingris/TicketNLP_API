@@ -19,8 +19,8 @@ CMDB = Cmdb(by_org={"100": ACME, "200": [Instance("GLXSQL01", parse_server_name(
 
 
 def output_json(mentions) -> str:
-    return json.dumps({"primary_type": "backup_restore", "secondary_types": ["job_failure"],
-                       "intent": "report_incident", "confidence": "high",
+    return json.dumps({"primary_type": "backup_restore", "secondary_types": ["scheduled_jobs"],
+                       "intent": "fix_incident", "confidence": "high",
                        "rationale": "A backup job failed.", "mentions": mentions})
 
 

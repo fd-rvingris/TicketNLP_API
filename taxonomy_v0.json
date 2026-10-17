@@ -1,0 +1,33 @@
+{
+  "version": "v0-draft",
+  "types": [
+    {"id": "backup_restore", "label": "Backup and restore", "definition": "Backups, restores, backup failures, retention, or point-in-time recovery."},
+    {"id": "outage_availability", "label": "Outage or availability", "definition": "A database, instance, server, or service is down, unreachable for everyone, or restarted unexpectedly."},
+    {"id": "performance", "label": "Performance", "definition": "Slowness, blocking, deadlocks, high CPU or memory, long-running queries, or tuning requests."},
+    {"id": "connectivity_access", "label": "Connectivity or access", "definition": "Specific users or applications cannot connect or log in (network, firewall, DNS, authentication) while the service itself is up."},
+    {"id": "security_permissions", "label": "Security or permissions", "definition": "Granting, changing, or reviewing logins, roles, and permissions, or encryption, auditing, and security findings."},
+    {"id": "maintenance_patching", "label": "Maintenance or patching", "definition": "Planned patching, cumulative updates, OS updates, index or statistics maintenance, and maintenance windows."},
+    {"id": "capacity_storage", "label": "Capacity or storage", "definition": "Disk space, file or log growth, full transaction logs, tempdb, storage allocation, or capacity planning."},
+    {"id": "replication_ha_dr", "label": "Replication, HA, or DR", "definition": "Availability groups, failover clusters, log shipping, mirroring, replication, failover tests, or disaster recovery."},
+    {"id": "job_failure", "label": "Job failure", "definition": "A SQL Agent job, SSIS or ETL package, or other scheduled process failed or did not run."},
+    {"id": "alert_monitoring", "label": "Alert or monitoring", "definition": "An automated monitoring alert that needs triage, or a request to add, change, or silence monitoring."},
+    {"id": "configuration_change", "label": "Configuration change", "definition": "Changing server, instance, or database settings, or creating and altering databases and objects."},
+    {"id": "migration_upgrade", "label": "Migration or upgrade", "definition": "Moving databases or servers to new hardware, versions, or cloud platforms, including version upgrades."},
+    {"id": "data_request_query", "label": "Data request or query", "definition": "Running queries or scripts, extracting or correcting data, or answering questions about data contents."},
+    {"id": "licensing_billing", "label": "Licensing or billing", "definition": "Software licensing, vendor audits, contracts, invoices, or billing for services."},
+    {"id": "general_question", "label": "General question", "definition": "A how-to or advice question that does not report a problem or request specific work."},
+    {"id": "other", "label": "Other", "definition": "The ticket is clear, but none of the listed types fits."},
+    {"id": "unknown", "label": "Unknown", "definition": "The ticket does not contain enough information to determine its type."}
+  ],
+  "intents": [
+    {"id": "report_incident", "label": "Report an incident", "definition": "Reports a problem, failure, or alert that needs investigation or a fix."},
+    {"id": "request_change", "label": "Request a change", "definition": "Asks us to make a change or perform work, such as a configuration change, script deployment, or restore."},
+    {"id": "request_information", "label": "Request information", "definition": "Asks a question or asks for a report, recommendation, or explanation."},
+    {"id": "request_access", "label": "Request access", "definition": "Asks for a login, access, or permissions to be granted or removed for a person or application."},
+    {"id": "schedule_work", "label": "Schedule work", "definition": "Asks to plan, schedule, or reschedule work such as patching or a maintenance window."},
+    {"id": "follow_up_status", "label": "Follow up on status", "definition": "Asks about the status of existing work or an earlier ticket."},
+    {"id": "provide_information", "label": "Provide information", "definition": "Supplies information or a notice without asking for action, such as an FYI or an upcoming change notice."},
+    {"id": "cancel_or_close", "label": "Cancel or close", "definition": "Asks to cancel a request or close the ticket."},
+    {"id": "unknown", "label": "Unknown", "definition": "The requester's intent cannot be determined from the ticket."}
+  ]
+}

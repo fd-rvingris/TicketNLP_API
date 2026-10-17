@@ -21,7 +21,7 @@ def parse_args():
     p.add_argument("--limit", type=int, help="only the first N tickets in the file")
     p.add_argument("--model", default=DEFAULT_MODEL, help=f"default {DEFAULT_MODEL}")
     p.add_argument("--effort", default=DEFAULT_EFFORT, choices=EFFORT_LEVELS, help=f"default {DEFAULT_EFFORT}")
-    p.add_argument("--prompt-version", default="v1", help="uses prompts/classify_<version>.md (default v1)")
+    p.add_argument("--prompt-version", default="v2", help="uses prompts/classify_<version>.md (default v2)")
     p.add_argument("--run-name", help="default <model family>-<prompt version>[-<effort>], e.g. opus-v1")
     p.add_argument("--workers", type=int, default=4, help="parallel API calls (default 4)")
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS,

@@ -1,33 +1,142 @@
 {
-  "version": "v0-draft",
+  "version": "v1-draft",
   "types": [
-    {"id": "backup_restore", "label": "Backup and restore", "definition": "Backups, restores, backup failures, retention, or point-in-time recovery."},
-    {"id": "outage_availability", "label": "Outage or availability", "definition": "A database, instance, server, or service is down, unreachable for everyone, or restarted unexpectedly."},
-    {"id": "performance", "label": "Performance", "definition": "Slowness, blocking, deadlocks, high CPU or memory, long-running queries, or tuning requests."},
-    {"id": "connectivity_access", "label": "Connectivity or access", "definition": "Specific users or applications cannot connect or log in (network, firewall, DNS, authentication) while the service itself is up."},
-    {"id": "security_permissions", "label": "Security or permissions", "definition": "Granting, changing, or reviewing logins, roles, and permissions, or encryption, auditing, and security findings."},
-    {"id": "maintenance_patching", "label": "Maintenance or patching", "definition": "Planned patching, cumulative updates, OS updates, index or statistics maintenance, and maintenance windows."},
-    {"id": "capacity_storage", "label": "Capacity or storage", "definition": "Disk space, file or log growth, full transaction logs, tempdb, storage allocation, or capacity planning."},
-    {"id": "replication_ha_dr", "label": "Replication, HA, or DR", "definition": "Availability groups, failover clusters, log shipping, mirroring, replication, failover tests, or disaster recovery."},
-    {"id": "job_failure", "label": "Job failure", "definition": "A SQL Agent job, SSIS or ETL package, or other scheduled process failed or did not run."},
-    {"id": "alert_monitoring", "label": "Alert or monitoring", "definition": "An automated monitoring alert that needs triage, or a request to add, change, or silence monitoring."},
-    {"id": "configuration_change", "label": "Configuration change", "definition": "Changing server, instance, or database settings, or creating and altering databases and objects."},
-    {"id": "migration_upgrade", "label": "Migration or upgrade", "definition": "Moving databases or servers to new hardware, versions, or cloud platforms, including version upgrades."},
-    {"id": "data_request_query", "label": "Data request or query", "definition": "Running queries or scripts, extracting or correcting data, or answering questions about data contents."},
-    {"id": "licensing_billing", "label": "Licensing or billing", "definition": "Software licensing, vendor audits, contracts, invoices, or billing for services."},
-    {"id": "general_question", "label": "General question", "definition": "A how-to or advice question that does not report a problem or request specific work."},
-    {"id": "other", "label": "Other", "definition": "The ticket is clear, but none of the listed types fits."},
-    {"id": "unknown", "label": "Unknown", "definition": "The ticket does not contain enough information to determine its type."}
+    {
+      "id": "backup_restore",
+      "label": "Backup and restore",
+      "definition": "Backups of databases or logs and restores done to recover data: failed, missed, late, or slow backups; backup jobs (any job whose purpose is a backup, such as DatabaseBackup or FD - Log Backup); backup exception and success reports; backup configuration and retention; taking a backup before a release; restoring to recover lost or damaged data or to a point in time. Not: copying a database into another environment, even by backup and restore (database_refresh); replica, standby, or log shipping health (replication_ha_dr); a backup volume running out of space (capacity_storage)."
+    },
+    {
+      "id": "database_refresh",
+      "label": "Database refresh or copy",
+      "definition": "Copying or restoring a database from one environment to another, usually production to development, test, QA, or UAT: one-off refresh requests, automated refresh jobs and scripts, post-refresh steps, refresh schedules and notifications, and advice on copying large databases for developers. Not: a restore to recover lost data (backup_restore); moving a database permanently to a new server, version, or platform (install_migrate_upgrade); continuous data movement such as replication (replication_ha_dr)."
+    },
+    {
+      "id": "outage_availability",
+      "label": "Outage or availability",
+      "definition": "A database, instance, server, listener, or database service (including SQL Server Agent) is down, offline, unresponsive, or unreachable for everyone, or has restarted. FDDBA post-restart Validation Results reports always go here, planned or not; put maintenance_patching or replication_ha_dr as secondary when the restart followed patching or a failover test. Not: our collector or exporter cannot reach or log in to an instance that is otherwise up (monitoring_tooling); one user or application cannot connect (access_security); a reboot requested as planned work (maintenance_patching); availability group or replica health (replication_ha_dr)."
+    },
+    {
+      "id": "performance",
+      "label": "Performance",
+      "definition": "Slowness, blocking, deadlocks, long-running or open sleeping transactions, high CPU, memory, swap, paging, or IO pressure, too many connections, wait and query analysis, killing a blocking session, recompiles, query and index tuning, and single-area performance or index reviews (including SIP Index and Performance Reviews). Adding indexes to speed up queries stays here even under a change ticket. Not: disk, file, or tablespace space (capacity_storage), even when the monitoring tool calls memory or swap a capacity metric; index and statistics maintenance jobs (maintenance_patching); a slow backup, refresh, or job, which takes that work's type."
+    },
+    {
+      "id": "access_security",
+      "label": "Access and security",
+      "definition": "Database access for client people, service accounts, and applications: granting, changing, verifying, or removing logins, users, roles, and permissions, including termination and access removal reports and role membership listings; SQL login passwords; a specific user or application that cannot connect or log in while the service is up (login failures, SSPI and certificate errors, drivers, linked servers, network or firewall), including severity alerts whose text describes a login, handshake, or packet error; encryption, auditing, and security reviews such as SIP Security Audits. Not: Fortified Data staff accounts on client systems (staff_access); our collector's own credentials or permissions (monitoring_tooling); everyone unable to connect because the instance is down (outage_availability)."
+    },
+    {
+      "id": "staff_access",
+      "label": "Staff access to client environments",
+      "definition": "Fortified Data staff accounts and access paths in client environments: recurring log-on and password keep-alive tasks ([Log on to ...], [Change Password for ...]), password changes and Keeper records, MFA devices, VPN forms, public keys, VDI, onboarding access verification, inactive-account notices, and staff connection tests. Not: database permissions for client users or applications (access_security); client-assigned training for staff (service_admin); adding a client's servers to Fortified tooling (monitoring_tooling)."
+    },
+    {
+      "id": "maintenance_patching",
+      "label": "Maintenance or patching",
+      "definition": "Planned upkeep: SQL Server, database engine, and OS patching and cumulative updates, patch reports and notices (for example Patchworx), patch scheduling and coordination, SIP patching tasks and maintenance reviews; planned and recurring reboots; maintenance windows and requests to silence or ignore alerts during client work; client notices of planned infrastructure or network work; index and statistics maintenance jobs and their failures; error log cycling. Not: a version or edition upgrade (install_migrate_upgrade); a failed integrity check (engine_errors); monitoring configuration such as alert rules or audits of silence windows (monitoring_tooling)."
+    },
+    {
+      "id": "capacity_storage",
+      "label": "Capacity or storage",
+      "definition": "Space and limits: disk, volume, file, tablespace, ASM disk group, recovery area, dump area, transaction log, and tempdb space; file growth and autogrowth settings; moving files to free space; compression or shrink done to save space; database size and growth reports; capacity reviews and planning; resizing storage or compute allocations; identity or key ranges nearing their limit. Not: current CPU, memory, or swap pressure (performance); space on the collector machine's own drive (monitoring_tooling)."
+    },
+    {
+      "id": "replication_ha_dr",
+      "label": "Replication, HA, or DR",
+      "definition": "Availability groups (health, latency, recovery time, failover, adding or removing databases, node job, login, or linked server mismatch), failover clusters and witnesses, mirroring, log shipping, Oracle Data Guard and Dbvisit standby log gaps, MySQL and PostgreSQL replicas, SQL Server and cloud replication agents and latency, change data capture, planned failovers, DR exercises, and DR/HA reviews. Not: a whole instance down (outage_availability); a Validation Results report after a failover test (outage_availability, with this type as secondary); a copy made for non-production use (database_refresh)."
+    },
+    {
+      "id": "scheduled_jobs",
+      "label": "Scheduled jobs and batch processes",
+      "definition": "SQL Agent jobs, SSIS packages, ETL and file loads, overnight and month-end processing, and external schedulers that failed, ran long, did not run, or must be run, checked, or changed, including Failed Job Alert tickets and the recurring Cenlar overnight checklist. A failed job takes the type of its purpose when that purpose is a backup (backup_restore), a refresh (database_refresh), an integrity check (engine_errors), or index or statistics maintenance (maintenance_patching); every other job stays here, including Fortified monitor jobs. Not: missing or wrong data when no job or load is named (data_request_query)."
+    },
+    {
+      "id": "engine_errors",
+      "label": "Engine errors or corruption",
+      "definition": "Database engine faults: stack dumps and daily dump file reports, corruption errors (823, 824, 825), suspect pages, failed integrity checks (DatabaseIntegrityCheck or CHECKDB), Oracle alert log errors, other engine errors, and severity alerts whose text does not describe a connection or login problem. Not: severity alerts that describe login, handshake, or packet errors (access_security); an instance that is down (outage_availability); an oversized error log (maintenance_patching)."
+    },
+    {
+      "id": "monitoring_tooling",
+      "label": "Monitoring and Fortified tooling",
+      "definition": "Fortified Data's monitoring and DBA tooling and what it covers: WISdom collectors and portal, FDDBA (deployments, releases, jobs, license notices), Prometheus, Grafana, Alertmanager, exporters, OEM agents, CMS, and dbinventory; onboarding or offboarding client servers into Fortified management (baselines, FDDBA push, collector assignment); collector or exporter authentication, connection, collection, and missing-data errors; alert rules, thresholds, custom alert setup, and audits of silence windows; Database Mail failures that stop alert email to Fortified Data; Fortified review scripts. Not: an alert about a database condition, which takes that condition's type; a silence or maintenance window requested for client work (maintenance_patching); internal systems not used in client environments, such as Zendesk automation (service_admin)."
+    },
+    {
+      "id": "configuration_change",
+      "label": "Configuration change",
+      "definition": "Changing server, instance, or database settings and options, such as page verify, recovery model, compatibility level, MAXDOP, memory, lock pages in memory, power plan, CPU socket layout, query store, Database Mail profiles, and linked servers, and creating new empty databases or schemas on request. Not: settings changed as part of an upgrade (install_migrate_upgrade); file size and growth (capacity_storage); objects or code created by scripts (deployment); permissions (access_security)."
+    },
+    {
+      "id": "install_migrate_upgrade",
+      "label": "Install, migration, or upgrade",
+      "definition": "Installing, rebuilding, uninstalling, or decommissioning database software, instances, or servers; version and edition upgrades of SQL Server, PostgreSQL, MySQL, or the OS; moving databases or servers to new hardware, data centers, or cloud platforms; upgrade reviews, planning documents, and quotes. Not: patches and cumulative updates within a version (maintenance_patching); copying a database to another environment for testing (database_refresh); onboarding servers into Fortified tooling (monitoring_tooling)."
+    },
+    {
+      "id": "deployment",
+      "label": "Deployment or code change",
+      "definition": "Running or supporting scripted changes in a client environment: change-ticket deployments (CHG, TCM, release tickets), scheduled release script runs, client-supplied scripts and DACPACs, application release updates, and creating or altering database objects such as tables, views, procedures, functions, and CLR assemblies, plus code and pull request reviews. Change-ticket and release work stays here even when the scripts load data. Not: adding indexes to improve query speed (performance); ad hoc data fixes, loads, or extracts that are not a release (data_request_query); instance or database settings (configuration_change)."
+    },
+    {
+      "id": "data_request_query",
+      "label": "Data request or query",
+      "definition": "Data work outside a release: running queries or extracts, inserting, updating, or deleting rows on request, investigating missing, mismatched, or incorrect data when no failing job is named, and answering questions about data contents. Not: scripted releases or change tickets (deployment); a named job or load that failed or did not run (scheduled_jobs); role membership or permission listings (access_security)."
+    },
+    {
+      "id": "assessment_review",
+      "label": "Assessment or environment review",
+      "definition": "Reviews that span several areas: client assessments, SIP environment reviews and findings reviews, server reviews, daily health check reports, and implementing multi-area findings from those reviews. A review limited to one area takes that area's type: SIP Index or Performance Review (performance), SIP Security Audit (access_security), SIP Database Maintenance Review or SIP patching (maintenance_patching), SIP Capacity Review (capacity_storage), SIP DR/HA Review (replication_ha_dr). Not: writing up the assessment procedure itself (service_admin)."
+    },
+    {
+      "id": "service_admin",
+      "label": "Meetings and administration",
+      "definition": "Non-technical work: client status meetings, check-ins, monthly decks, ticket reports, scoping calls, renewals and offboarding notices, client staff absence notices; internal standups, 1:1s, and company meetings; staff training, including client-required training; shift reminders; internal KB and procedure writing; internal labs, Zendesk automation errors, and test tickets. A meeting about one technical subject (an upgrade plan, a DR exercise) takes that subject's type. Not: staff log-on and password tasks (staff_access); onboarding servers into Fortified tooling (monitoring_tooling)."
+    },
+    {
+      "id": "other",
+      "label": "Other",
+      "definition": "The ticket is clear, but none of the listed types fits, for example an automated one-time passcode email. Frequent use signals a missing type."
+    },
+    {
+      "id": "unknown",
+      "label": "Unknown",
+      "definition": "The ticket does not contain enough information to determine its type, for example an answering-service message or call notification with no technical detail, a bare server name, or an alert whose name and body name no condition."
+    }
   ],
   "intents": [
-    {"id": "report_incident", "label": "Report an incident", "definition": "Reports a problem, failure, or alert that needs investigation or a fix."},
-    {"id": "request_change", "label": "Request a change", "definition": "Asks us to make a change or perform work, such as a configuration change, script deployment, or restore."},
-    {"id": "request_information", "label": "Request information", "definition": "Asks a question or asks for a report, recommendation, or explanation."},
-    {"id": "request_access", "label": "Request access", "definition": "Asks for a login, access, or permissions to be granted or removed for a person or application."},
-    {"id": "schedule_work", "label": "Schedule work", "definition": "Asks to plan, schedule, or reschedule work such as patching or a maintenance window."},
-    {"id": "follow_up_status", "label": "Follow up on status", "definition": "Asks about the status of existing work or an earlier ticket."},
-    {"id": "provide_information", "label": "Provide information", "definition": "Supplies information or a notice without asking for action, such as an FYI or an upcoming change notice."},
-    {"id": "cancel_or_close", "label": "Cancel or close", "definition": "Asks to cancel a request or close the ticket."},
-    {"id": "unknown", "label": "Unknown", "definition": "The requester's intent cannot be determined from the ticket."}
+    {
+      "id": "fix_incident",
+      "label": "Fix an incident",
+      "definition": "Something is broken, failing, degraded, or alerting and needs investigation or a fix: monitoring alerts from Fortified or client tools, failed jobs or backups, errors, outages, slowness, missing data, and incident bridges. Automated alerts default here. Not: an alert or report that says the condition cleared or succeeded (provide_information); planned work (request_change)."
+    },
+    {
+      "id": "request_change",
+      "label": "Request a change or work",
+      "definition": "Asks us to perform specific one-off work or make a change: deployments, configuration changes, access grants and removals, refreshes, restores, failovers, patching, maintenance windows, installs, data fixes, onboarding, and scheduling or rescheduling that work, including one-off internal tasks such as completing training. Not: a recurring scheduled chore (perform_routine_task); a request for a review, recommendation, or explanation without implementation (request_information)."
+    },
+    {
+      "id": "request_information",
+      "label": "Request information",
+      "definition": "Asks a question or asks for a report, review, assessment, recommendation, quote, estimate, or explanation, including SIP reviews and one-off discussions or scoping calls, even when the review recurs. Not: a question about the status of existing work (follow_up); a request to implement the recommendation (request_change)."
+    },
+    {
+      "id": "perform_routine_task",
+      "label": "Perform a routine task",
+      "definition": "A recurring ticket created on a schedule for a standing chore with fixed instructions: log-on keep-alives, scheduled release script runs, overnight and month-end checklists, recurring reboots and patch cycles, shift reminders, and recurring meetings and their preparation. Not: recurring reviews that produce findings (request_information); alerts (fix_incident)."
+    },
+    {
+      "id": "provide_information",
+      "label": "Provide information",
+      "definition": "Supplies information without asking for action: FYI and change notices, patch notices and reports, cleared, resolved, or success alerts, health and size reports sent for awareness, automated acknowledgments, and passcode emails. Not: a notice that also asks us to confirm, prepare, join, or act (request_change)."
+    },
+    {
+      "id": "follow_up",
+      "label": "Follow up on existing work",
+      "definition": "Asks for the status of earlier work, confirms it is complete, or asks to cancel or close it. Not: a reply that raises new work, which is classified by the new ask."
+    },
+    {
+      "id": "unknown",
+      "label": "Unknown",
+      "definition": "The requester's intent cannot be determined, for example a call notification with no message, a test ticket, or a bare server name."
+    }
   ]
 }
