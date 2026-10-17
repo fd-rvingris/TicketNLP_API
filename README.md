@@ -223,9 +223,11 @@ its own card (kind, host, instance, status, score) when a ticket has them, so
 `detect --write` shows the results.
 
 Each detection is `{text, field, start, end, kind, host, instance, status,
-candidates, typo_of, sibling_of, score, rule, evidence}`. Offsets are into the field
+candidates, typo_of, sibling_of, score, rule, evidence, environment}`. Offsets are into the field
 named by `field` (subject or description). `kind` is `host`, `host_instance`
-(written as HOST\INSTANCE) or `bare_instance`. Statuses:
+(written as HOST\INSTANCE) or `bare_instance`. `environment` is the one the
+client's alerts (collector Environment Name, Grafana env) or the CMDB export
+give most often for the resolved host, or null. Statuses:
 
 | Status | Meaning |
 | --- | --- |
@@ -266,11 +268,22 @@ How it works:
    handling templated alert text (label words removed from the context, or
    alerts' context ignored), and a separate binary instance model. The best
    macro average precision over host and instance is kept.
-5. Rules mark unambiguous wording, and a rule match scores at least 0.95, so
-   it is detected whatever the model says. Instances: `MSSQL$NAME` and
-   `SQLAgent$NAME`, `NAME instance`, `instance NAME`, `instance named NAME`
-   (not filler words such as "the" or "this", and not alert template lines),
-   and a known instance of the ticket's client written in upper case. Hosts:
+5. The dictionary pass runs first. A confirmed name of the ticket's client
+   (named in its alert fields or the CMDB export, not only in dw_servers)
+   scores 1.0, so it is detected whatever the model says: a confirmed host
+   written alone or as HOST\INSTANCE, where a host made of letters only also
+   needs a server word (server, host, vm and the like) before it, and a
+   confirmed instance name next to an instance cue. A confirmed host stays a
+   candidate even when it is a frequent word, if it has a digit or
+   punctuation or follows a server word; a letters-only host known only
+   from dw_servers is not a host candidate unless it sits in a connection
+   string, UNC path or has a port (against hand labels, none of those
+   detections were servers). Rules then mark unambiguous wording, and a rule
+   match scores at least 0.95, so it is detected whatever the model says.
+   Instances: `MSSQL$NAME` and `SQLAgent$NAME`, `NAME instance`,
+   `instance NAME`, `instance named NAME` (not filler words such as "the" or
+   "this", and not alert template lines), and a known instance of the
+   ticket's client written in upper case. Hosts:
    HOST\INSTANCE whose host has a digit, is known or sits in a connection
    string (so `CORP\jsmith` logins are left to the model); connection-string
    values; UNC hosts; names with a port or tcp:; a name with a digit after
@@ -310,7 +323,9 @@ subdomain are refused, so the API token only goes to the configured one. The
 page highlights each detection in the text, lists kind, host, instance,
 status and score, and shows every candidate with its host and instance
 probabilities. Changing a threshold re-scores the current text without
-fetching it again. Text and tickets stay in memory and on the page; the
+fetching it again. The How it works tab (`#how`) walks through the layers
+(tokenizing, candidate filter, dictionary pass, rules, model, resolution)
+with a made-up example ticket and the dictionary pass's holdout results. Text and tickets stay in memory and on the page; the
 console logs request paths only. Options: --port, --model-path, --train (read
 for client names) and --open.
 
@@ -365,9 +380,14 @@ MSSQLSERVER counts as the host alone.
 | lookup(host, instance, client_key) | {status, hosts}, with the host and instance rules of `match_mention()` |
 | clients() | client keys |
 | client_for(ticket) | the ticket's client key, by organization id, then name |
+| confirmed_hosts(client_key=None) | hosts named in alert fields or the CMDB export |
+| confirmed_instances(client_key=None) | (host, instance) pairs from the same sources |
+| environment(host, client_key) | the environment those sources give most often, or None |
 
 `LocalServerDirectory` builds it from server-shaped alert fields, dw_servers
-and data/instances.csv when present. `CmdbApiDirectory` is a stub that raises
+and data/instances.csv when present. Names from alert fields and the CMDB
+export are also kept as confirmed, with their environment; dw_servers names
+are known but not confirmed. `CmdbApiDirectory` is a stub that raises
 NotImplementedError and documents the expected API shape.
 
 ## Labeling

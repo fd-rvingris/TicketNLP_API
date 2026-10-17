@@ -105,6 +105,47 @@
   .progress { font-size: 13px; }
   .types-wrap { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; }
   .types-wrap th { position: sticky; top: 0; background: var(--bg); }
+  /* How it works: one colour per layer, from the page's own tokens */
+  .how { display: grid; gap: 18px; max-width: 980px; }
+  .how h3 { margin: 0; font-size: 15px; }
+  .how p { margin: 0; max-width: 78ch; }
+  .how code { font-family: var(--mono); font-size: 12px; }
+  .how .l-dict { --c: var(--good); --soft: var(--good-soft); }
+  .how .l-rule { --c: var(--alert); --soft: var(--alert-soft); }
+  .how .l-model { --c: var(--pair-line); --soft: var(--pair); }
+  .how .l-drop { --c: var(--muted); --soft: var(--af-date); }
+  .how .l-res { --c: var(--accent); --soft: var(--accent-soft); }
+  .how .l-in { --c: var(--fg); --soft: var(--af-date); }
+  .pipe { list-style: none; margin: 0; padding: 0; display: grid; }
+  .stage { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; position: relative; padding-bottom: 12px; }
+  .stage:last-child { padding-bottom: 0; }
+  .stage::before { content: ""; position: absolute; left: 14px; top: 30px; bottom: 0; width: 2px; background: var(--line); }
+  .stage:last-child::before { display: none; }
+  .node { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px;
+          background: var(--panel); border: 2px solid var(--c); color: var(--c); position: relative; z-index: 1; }
+  .layer { border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 6px; padding: 8px 12px; display: grid; gap: 6px; min-width: 0; }
+  .layer.on { box-shadow: 0 0 0 2px var(--c); }
+  .layer ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+  .layer-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+  .layer-head .chip { background: var(--soft); color: var(--c); }
+  .chip.new { background: transparent; border: 1px solid var(--bad); color: var(--bad); }
+  .rule-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 2px 16px; font-size: 13px; }
+  .rule-grid code { color: var(--alert); }
+  .how-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); }
+  .how-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--c); margin-right: 5px; vertical-align: -1px; }
+  .example { font: 13px/2 var(--mono); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; background: var(--bg); overflow-wrap: anywhere; }
+  .tk { font: inherit; color: var(--c); background: var(--soft); border: 1px solid transparent; border-radius: 3px; padding: 0 3px; cursor: pointer; }
+  .tk:hover, .tk[aria-pressed="true"] { border-color: var(--c); }
+  .tk.drop { text-decoration: line-through; }
+  .trace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 760px) { .trace { grid-template-columns: minmax(0, 1fr); } }
+  .path { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .path li { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 8px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 4px; font-size: 13px; }
+  .path li.hit { border-color: var(--c); background: var(--soft); }
+  .path li.skip { opacity: 0.55; }
+  .path b { font-family: var(--mono); font-size: 12px; color: var(--c); }
+  .how pre.out { margin: 0; font: 12px/1.6 var(--mono); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; background: var(--bg); overflow-x: auto; }
+  .src-bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--c); vertical-align: middle; margin-right: 6px; }
 </style>
 </head>
 <body>
@@ -119,6 +160,7 @@
       <button type="button" role="tab" id="tab-zendesk" aria-selected="false" aria-controls="panel-zendesk">Zendesk ticket</button>
       <button type="button" role="tab" id="tab-label" aria-selected="false" aria-controls="panel-label" hidden>Label tickets</button>
       <button type="button" role="tab" id="tab-types" aria-selected="false" aria-controls="panel-types" hidden>Alert types</button>
+      <button type="button" role="tab" id="tab-how" aria-selected="false" aria-controls="panel-how">How it works</button>
     </div>
     <div id="panel-text" role="tabpanel" aria-labelledby="tab-text" style="display:grid; gap:8px">
       <div class="row">
@@ -154,6 +196,117 @@
       </div>
       <div class="meta" id="types-note"></div>
       <div class="types-wrap" id="types-list"></div>
+    </div>
+    <div id="panel-how" role="tabpanel" aria-labelledby="tab-how" hidden style="display:none; gap:8px">
+      <div class="how">
+        <p>Each ticket passes through six layers. Known names are matched first, unambiguous wording second, and the model decides everything that is left. Click a highlighted name in the example to follow it through the layers.</p>
+        <div class="how-legend">
+          <span class="l-dict"><i></i>Dictionary pass (score 1.0)</span>
+          <span class="l-rule"><i></i>Rules (score 0.95)</span>
+          <span class="l-model"><i></i>Model (scored, thresholded)</span>
+          <span class="l-drop"><i></i>Filtered out</span>
+          <span class="l-res"><i></i>Resolution</span>
+        </div>
+        <ol class="pipe">
+          <li class="stage l-in"><div class="node">0</div><div class="layer" id="how-in">
+            <div class="layer-head"><h3>Inputs</h3></div>
+            <ul>
+              <li>Ticket text: the subject plus the first 20,000 characters of the description.</li>
+              <li>The client, from the Zendesk organization id (or name).</li>
+              <li>The known-names directory per client. <b>Confirmed</b> names come from parsed alert fields and the CMDB export, with the environment the alert gives (collector <code>Environment Name</code>, Grafana <code>env</code>). Names seen only in <code>dw_servers</code> are known but not confirmed.</li>
+            </ul>
+          </div></li>
+          <li class="stage l-drop"><div class="node">1</div><div class="layer" id="how-tok">
+            <div class="layer-head"><h3>Tokenize</h3></div>
+            <p>Splits on whitespace and punctuation but keeps <code>\ . - _ , : $</code> inside a token, so <code>HOST\INST</code>, <code>db01.corp.local</code>, <code>host,1433</code>, <code>tcp:host</code> and <code>MSSQL$INST</code> survive whole. Each token is split into its server-like parts (UNC host, service suffix, port, HOST\INSTANCE), and connection-string values (<code>Server=</code>, <code>Data Source=</code>) are marked.</p>
+          </div></li>
+          <li class="stage l-drop"><div class="node">2</div><div class="layer" id="how-cand">
+            <div class="layer-head"><h3>Candidate filter</h3><span class="chip">generous: a name dropped here cannot come back</span></div>
+            <ul>
+              <li><b>Host candidate:</b> 3 to 63 characters with a letter, or an IPv4 address; not a stop word (built-in list plus words in 0.5% of human tickets), date, ticket number, KB or error code, file name or email part.</li>
+              <li><b>Instance candidate:</b> 2 to 16 characters with a letter, and a known instance name, within 3 tokens of an instance cue, or written in upper case.</li>
+              <li><span class="chip new">new</span> A confirmed host of the client stays a candidate even when it is a frequent word, if it has a digit or punctuation or follows a server word.</li>
+              <li><span class="chip new">new</span> A letters-only name known only from <code>dw_servers</code> is not a host candidate unless it sits in a connection string, UNC path or has a port.</li>
+            </ul>
+          </div></li>
+          <li class="stage l-dict"><div class="node">3</div><div class="layer" id="how-dict">
+            <div class="layer-head"><h3>Dictionary pass</h3><span class="chip">score 1.0</span><span class="chip new">new</span></div>
+            <ul>
+              <li>A confirmed host of the client, written alone or as <code>HOST\INSTANCE</code>, is detected outright.</li>
+              <li>A letters-only confirmed host (<code>payroll</code>) also needs a server word before it: server, host, vm, box, machine, node.</li>
+              <li>A confirmed instance name counts only next to an instance cue (<code>the FINANCE instance</code>).</li>
+              <li>One check runs before it: a host the alert names in its own parsed fields is marked <code>host:alert_field</code> (score 0.95).</li>
+            </ul>
+          </div></li>
+          <li class="stage l-rule"><div class="node">4</div><div class="layer" id="how-rule">
+            <div class="layer-head"><h3>Rules</h3><span class="chip">score at least 0.95</span></div>
+            <div class="rule-grid">
+              <div><code>instance:service_suffix</code> MSSQL$NAME, SQLAgent$NAME</div>
+              <div><code>instance:name_before_instance</code> NAME instance</div>
+              <div><code>instance:name_after_instance</code> instance (named) NAME</div>
+              <div><code>host:host_instance</code> HOST\INSTANCE, host has a digit or is known</div>
+              <div><code>host:connection_string</code> Server=, Data Source=</div>
+              <div><code>host:unc_path</code> \\host\share</div>
+              <div><code>host:port</code> host,1433, tcp:host, host:1433</div>
+              <div><code>host:after_server_word</code> server sql01, instance on sql01</div>
+              <div><code>host:known_name</code> client's known host with a digit</div>
+              <div><code>host:near_known_name</code> one typo, or trailing digits differ</div>
+              <div><code>instance:known_name</code> client's known instance in upper case</div>
+            </div>
+          </div></li>
+          <li class="stage l-model"><div class="node">5</div><div class="layer" id="how-model">
+            <div class="layer-head"><h3>Model</h3><span class="chip">logistic regression: host, instance or none</span></div>
+            <ul>
+              <li><b>Name:</b> character n-grams 2 to 5 (<code>char_wb</code>, TF-IDF), so an unseen name is judged by its shape.</li>
+              <li><b>Context:</b> the 3 words either side.</li>
+              <li><b>Dense features:</b> length, case, digits, punctuation, compressed pattern (<code>L6 D2</code>), port, connection string, UNC, alert or human, how many hosts use the name as an instance, and resemblance to the client's naming convention.</li>
+              <li>Thresholds come from the best F1 on a validation split; the threshold fields on the other tabs start at the saved model's values. A rule or dictionary match lifts the score, so the model decides only the rest.</li>
+            </ul>
+          </div></li>
+          <li class="stage l-res"><div class="node">6</div><div class="layer" id="how-res">
+            <div class="layer-head"><h3>Decide and resolve</h3></div>
+            <ul>
+              <li>Host or instance, whichever clears its threshold (host wins a tie).</li>
+              <li>Status from the directory: known, new instance on a known host, possible new host, typo of a known name (one edit, same pattern), or a sibling of a known host.</li>
+              <li>A bare instance is paired with the nearest host in the ticket, then with the client's single host that has it; several are ambiguous.</li>
+              <li><span class="chip new">new</span> <code>environment</code> from the client's alerts or CMDB export for the resolved host.</li>
+            </ul>
+          </div></li>
+        </ol>
+
+        <h3>A ticket, layer by layer</h3>
+        <p class="meta">A made-up ticket for a client whose alerts confirm <code>fakesql11</code> (Production), <code>fakesql12\FINANCE</code> (uat) and <code>payroll</code>, and whose <code>dw_servers</code> also list <code>appmain</code>. The outcomes shown come from running this text through server_detector.py.</p>
+        <div class="example" id="how-example"></div>
+        <div class="trace">
+          <div style="display:grid; gap:8px; min-width:0">
+            <h3 id="how-title"></h3>
+            <p id="how-why"></p>
+            <ol class="path" id="how-path"></ol>
+          </div>
+          <div style="display:grid; gap:8px; min-width:0">
+            <h2>Detection</h2>
+            <pre class="out" id="how-out"></pre>
+          </div>
+        </div>
+
+        <h3>What the dictionary pass changed</h3>
+        <p class="meta">Measured 2026-10-17 on 200 Claude-labeled tickets held out of training; both versions trained fresh with the same settings. The instance rows rest on 10 labeled mentions, so they show direction, not a rate. Measured before two later adjustments (the upper-case known-instance rule restored, and frequent-word confirmed hosts kept only after a server word); to be refreshed after retraining.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Measure</th><th class="num">Before</th><th class="num">After</th></tr></thead>
+          <tbody>
+            <tr><td>Host precision</td><td class="num">51.8% (215/415)</td><td class="num">64.8% (214/330)</td></tr>
+            <tr><td>Host recall</td><td class="num">89.2% (215/241)</td><td class="num">88.8% (214/241)</td></tr>
+            <tr><td>Host recall, new names</td><td class="num">45.2% (19/42)</td><td class="num">42.9% (18/42)</td></tr>
+            <tr><td>Instance precision</td><td class="num">19.0% (4/21)</td><td class="num">38.1% (8/21)</td></tr>
+            <tr><td>Instance recall</td><td class="num">40.0% (4/10)</td><td class="num">80.0% (8/10)</td></tr>
+          </tbody>
+        </table></div>
+        <p class="meta">Why sources are treated differently: host detections of the earlier model on the same tickets, by where the name was known from.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Name known from</th><th class="num">Correct</th><th>Precision</th></tr></thead>
+          <tbody id="how-sources"></tbody>
+        </table></div>
+      </div>
     </div>
     <div class="row" id="th-row">
       <label>Host threshold<input type="number" id="th-host" min="0" max="1" step="0.05"></label>
@@ -200,6 +353,7 @@
   const RULE_TEXT = {
     "instance:service_suffix": "rule: MSSQL$/SQLAgent$ service name", "instance:name_before_instance": "rule: <name> instance",
     "instance:name_after_instance": "rule: instance <name>", "instance:known_name": "rule: client's known instance",
+    "host:dictionary": "dictionary: client's confirmed host", "instance:dictionary": "dictionary: client's confirmed instance",
     "host:known_name": "rule: client's known host", "host:near_known_name": "rule: close to a known host",
     "host:host_instance": "rule: HOST\\INSTANCE", "host:connection_string": "rule: connection string",
     "host:alert_field": "rule: server named in the alert's fields", "host:unc_path": "rule: UNC path", "host:port": "rule: name with port", "host:after_server_word": "rule: after server/host/instance on",
@@ -660,18 +814,120 @@
     run("/api/alert-types/example", { key }, null);
   }
 
+  // --- How it works ----------------------------------------------------------------
+  // A fixed, made-up example. Each name's path through the layers: [state, note] per layer, where state is
+  // "hit" (decided here), "stop" (dropped here), "pass" or "skip" (not reached or not needed).
+
+  const HOW_LAYERS = [["in", "Inputs", "l-in"], ["tok", "Tokenize", "l-drop"], ["cand", "Candidate filter", "l-drop"],
+    ["dict", "Dictionary pass", "l-dict"], ["rule", "Rules", "l-rule"], ["model", "Model", "l-model"], ["res", "Resolve", "l-res"]];
+  const HOW_NAMES = {
+    fakesql11: { layer: "l-dict", title: "fakesql11",
+      why: "A confirmed host of the client with a digit, so the dictionary pass detects it outright. Its environment comes from the client's alerts.",
+      path: { in: ["pass", "confirmed from alerts, env Production"], tok: ["pass", "one token"], cand: ["pass", "host candidate"],
+              dict: ["hit", "host:dictionary, score 1.0"], rule: ["skip", ""], model: ["skip", "score already 1.0"], res: ["hit", "known, environment Production"] },
+      out: { text: "fakesql11", kind: "host", host: "fakesql11", instance: null, status: "known", rule: "host:dictionary", score: 1.0, environment: "Production" } },
+    FINANCE: { layer: "l-dict", title: "FINANCE",
+      why: "A confirmed instance name next to the word \"instance\". It is paired with fakesql12 in the same sentence, because the directory has that pair.",
+      path: { in: ["pass", "confirmed pair fakesql12\\FINANCE"], tok: ["pass", "one token"], cand: ["pass", "instance candidate: upper case, known, cue"],
+              dict: ["hit", "instance:dictionary, score 1.0"], rule: ["skip", ""], model: ["skip", "score already 1.0"], res: ["hit", "paired with fakesql12, known, uat"] },
+      out: { text: "FINANCE", kind: "bare_instance", host: "fakesql12", instance: "finance", status: "known", rule: "instance:dictionary", score: 1.0, environment: "uat" } },
+    fakesql12: { layer: "l-dict", title: "fakesql12",
+      why: "A confirmed host, known from the alert that named fakesql12\\FINANCE.",
+      path: { in: ["pass", "confirmed from alerts, env uat"], tok: ["pass", "one token"], cand: ["pass", "host candidate"],
+              dict: ["hit", "host:dictionary, score 1.0"], rule: ["skip", ""], model: ["skip", "score already 1.0"], res: ["hit", "known, environment uat"] },
+      out: { text: "fakesql12", kind: "host", host: "fakesql12", instance: null, status: "known", rule: "host:dictionary", score: 1.0, environment: "uat" } },
+    payroll1: { layer: "l-dict", title: "payroll, after \"server\"",
+      why: "A confirmed host made of letters only. It is also a frequent word, so it stays a candidate only because it is confirmed and follows a server word, which the dictionary pass also needs.",
+      path: { in: ["pass", "confirmed from alerts"], tok: ["pass", "one token"], cand: ["pass", "stop word, kept: confirmed, after \"server\""],
+              dict: ["hit", "host:dictionary: letters only, \"server\" before it"], rule: ["skip", ""], model: ["skip", "score already 1.0"], res: ["hit", "known"] },
+      out: { text: "payroll", kind: "host", host: "payroll", instance: null, status: "known", rule: "host:dictionary", score: 1.0, environment: null } },
+    payroll2: { layer: "l-drop", title: "payroll, in \"payroll ran late\"",
+      why: "The same confirmed name with no server word before it, so it may be the payroll process. As a frequent word without a server word it is not a candidate, which also keeps prose like this out of the training labels.",
+      path: { in: ["pass", "confirmed from alerts"], tok: ["pass", "one token"], cand: ["stop", "dropped: frequent word, no server word"],
+              dict: ["skip", ""], rule: ["skip", ""], model: ["skip", ""], res: ["skip", ""] },
+      out: null },
+    fakenas03: { layer: "l-rule", title: "\\\\fakenas03\\dumps",
+      why: "Not in the directory, but a UNC path is unambiguous: the part after \\\\ is a host.",
+      path: { in: ["pass", "unknown name"], tok: ["pass", "split into its UNC host"], cand: ["pass", "host candidate, UNC"],
+              dict: ["pass", "not confirmed"], rule: ["hit", "host:unc_path, score 0.95"], model: ["skip", "score already 0.95"], res: ["hit", "possible new host"] },
+      out: { text: "fakenas03", kind: "host", host: "fakenas03", instance: null, status: "possible_new_host", rule: "host:unc_path", score: 0.95, environment: null } },
+    appmain: { layer: "l-drop", title: "appmain",
+      why: "Known only from dw_servers and made of letters only. On the hand-labeled tickets none of these names were servers where they occurred, so it is not a host candidate.",
+      path: { in: ["pass", "known from dw_servers only"], tok: ["pass", "one token"], cand: ["stop", "dropped: unconfirmed letters-only name"],
+              dict: ["skip", ""], rule: ["skip", ""], model: ["skip", ""], res: ["skip", ""] },
+      out: null },
+    KB: { layer: "l-model", title: "KB5031234",
+      why: "The KB article pattern rules it out as a host. It stays an instance candidate only because it is upper case, so the model scores it as an instance.",
+      path: { in: ["pass", "unknown"], tok: ["pass", "one token"], cand: ["pass", "not a host (KB pattern); instance candidate only"],
+              dict: ["pass", "not confirmed"], rule: ["pass", "no instance cue"], model: ["hit", "scored against the instance threshold"], res: ["skip", "only if the model detects it"] },
+      out: null },
+    sqlnew7: { layer: "l-model", title: "sqlnew7",
+      why: "A name the directory has never seen, in plain prose. Only the model can decide: its n-grams (sql, new, ew7) and shape (letters then a digit) resemble server names.",
+      path: { in: ["pass", "unknown name"], tok: ["pass", "one token"], cand: ["pass", "host candidate"],
+              dict: ["pass", "not confirmed"], rule: ["pass", "no cue word, no port"], model: ["hit", "scored against the host threshold"], res: ["hit", "possible new host, if detected"] },
+      out: null },
+    sqlprd22: { layer: "l-rule", title: "sqlprd22,1433",
+      why: "A connection-string value with a SQL Server port.",
+      path: { in: ["pass", "unknown name"], tok: ["pass", "Server= value, port split off"], cand: ["pass", "host candidate, strong context"],
+              dict: ["pass", "not confirmed"], rule: ["hit", "host:connection_string, score 0.95"], model: ["skip", "score already 0.95"], res: ["hit", "possible new host"] },
+      out: { text: "sqlprd22,1433", kind: "host", host: "sqlprd22", instance: null, status: "possible_new_host", rule: "host:connection_string", score: 0.95, environment: null } },
+  };
+  const HOW_TEXT = ["Users report slow queries on ", ["fakesql11"], " since 9am. The ", ["FINANCE"], " instance on ", ["fakesql12"],
+    " was restarted. Please reboot server ", ["payroll1", "payroll"], "; ", ["payroll2", "payroll"], " ran late. Copy to ",
+    ["fakenas03", "\\\\fakenas03\\dumps"], ". ", ["appmain"], " is fine. See ", ["KB", "KB5031234"], ". ", ["sqlnew7"],
+    " may also be affected. Connection: Server=", ["sqlprd22", "sqlprd22,1433"], ";Database=x"];
+  // Holdout precision by name source, before the dictionary pass (2026-10-17)
+  const HOW_SOURCES = [["Alert fields, name has a digit", 131, 141, "l-dict"], ["Alert fields, letters only", 24, 62, "l-dict"],
+    ["dw_servers only, name has a digit", 44, 77, "l-rule"], ["dw_servers only, letters only", 0, 52, "l-drop"],
+    ["Not in the directory", 16, 83, "l-model"]];
+  let HOW_READY = false;
+
+  function renderHow() {
+    if (HOW_READY) return;
+    HOW_READY = true;
+    $("how-example").replaceChildren(...HOW_TEXT.map(part => {
+      if (typeof part === "string") return part;
+      const [key, label] = part, n = HOW_NAMES[key];
+      return el("button", { type: "button", class: `tk ${n.layer}${n.layer === "l-drop" ? " drop" : ""}`, "data-key": key,
+                            "aria-pressed": "false", onclick: () => showHow(key) }, label || key);
+    }));
+    $("how-sources").replaceChildren(...HOW_SOURCES.map(([label, ok, n, layer]) => el("tr", { class: layer },
+      el("td", {}, label), el("td", { class: "num" }, `${ok} / ${n}`),
+      el("td", {}, el("span", { class: "src-bar", style: `width:${Math.max(2, Math.round(ok / n * 90))}px` }), pct(ok / n)))));
+    showHow("fakesql11");
+  }
+
+  function showHow(key) {
+    const n = HOW_NAMES[key];
+    for (const b of $("how-example").querySelectorAll(".tk")) b.setAttribute("aria-pressed", String(b.dataset.key === key));
+    $("how-title").textContent = n.title;
+    $("how-why").textContent = n.why;
+    $("how-path").replaceChildren(...HOW_LAYERS.map(([id, name, layer]) => {
+      const [state, note] = n.path[id];
+      const cls = (state === "stop" ? "l-drop hit" : `${layer}${state === "hit" ? " hit" : state === "skip" ? " skip" : ""}`);
+      const fallback = state === "stop" ? "dropped" : state === "skip" ? "not reached" : "passed";
+      return el("li", { class: cls }, el("b", {}, name), el("span", {}, note || fallback));
+    }));
+    $("how-out").textContent = n.out ? JSON.stringify(n.out, null, 2)
+      : key === "appmain" || key === "payroll2" ? "No detection." : "Depends on the model's score: the rules alone detect nothing here.";
+    for (const [id] of HOW_LAYERS) {
+      const state = n.path[id][0];
+      $(`how-${id}`).classList.toggle("on", state === "hit" || state === "stop");
+    }
+  }
+
   // --- Setup ---------------------------------------------------------------------
 
   function selectTab(which) {
-    for (const name of ["text", "zendesk", "label", "types"]) {
+    for (const name of ["text", "zendesk", "label", "types", "how"]) {
       const on = name === which;
       $(`tab-${name}`).setAttribute("aria-selected", String(on));
       $(`panel-${name}`).hidden = !on;
       $(`panel-${name}`).style.display = on ? "grid" : "none";
     }
     const labeling = which === "label";
-    $("th-row").hidden = labeling;
-    $("results").hidden = labeling;
+    $("th-row").hidden = labeling || which === "how";
+    $("results").hidden = labeling || which === "how";
     $("label-view").hidden = !labeling || !LABEL.ticket;
     if (labeling && !LABEL.name && $("labeler-name").value) startLabeling();
   }
@@ -687,6 +943,8 @@
     $("tab-zendesk").addEventListener("click", () => selectTab("zendesk"));
     $("tab-label").addEventListener("click", () => selectTab("label"));
     $("tab-types").addEventListener("click", () => { selectTab("types"); if (!TYPES.length) loadTypes(); });
+    $("tab-how").addEventListener("click", () => { selectTab("how"); renderHow(); });
+    if (location.hash === "#how") { selectTab("how"); renderHow(); }
     $("types-filter").addEventListener("input", renderTypes);
     $("types-layout").addEventListener("change", renderTypes);
     $("label-start").addEventListener("click", startLabeling);

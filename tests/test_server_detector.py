@@ -454,6 +454,71 @@ def test_known_name_rules_need_the_client_and_skip_ordinary_words():
     assert sd.detect_servers(t, d, rules_only_model()) == []
 
 
+def alert(tid, fields, org="100", name="Acme"):
+    t = make_ticket(tid, "Alert #1", "x", organization_id=org, organization_name=name, is_alert=1)
+    t["alert_fields"] = fields
+    return t
+
+
+def dictionary_directory():
+    """Confirmed names from alerts (with an environment), plus dw_servers-only names."""
+    return sd.LocalServerDirectory.from_sources([
+        alert(1, {"server": "fakesql11", "environment": "Production"}),
+        alert(2, {"instance": r"fakesql12\FINANCE", "env": "uat"}),
+        alert(3, {"server": "payroll"}),
+        alert(4, {"server": "fakesql11", "environment": "Production"}),
+        human(5, "x", dw=["appmain", "fakeapp03", "fakesql11"]),
+    ], None)
+
+
+def test_directory_keeps_confirmed_names_and_environments_apart_from_dw_servers():
+    d = dictionary_directory()
+    assert d.hosts("100") == ["appmain", "fakeapp03", "fakesql11", "fakesql12", "payroll"]
+    assert d.confirmed_hosts("100") == ["fakesql11", "fakesql12", "payroll"]
+    assert d.confirmed_instances("100") == [("fakesql12", "finance")]
+    assert d.environment("fakesql11", "100") == "Production" and d.environment("fakesql12", "100") == "uat"
+    assert d.environment("fakeapp03", "100") is None and d.environment("fakesql11", "999") is None
+    kept = d.without(hosts={"fakesql11"})
+    assert kept.confirmed_hosts("100") == ["fakesql12", "payroll"] and kept.environment("fakesql11", "100") is None
+    assert d.stats()["confirmed_hosts"] == 3 and d.stats()["hosts_with_environment"] == 2
+
+
+def test_dictionary_pass_detects_confirmed_names_first_with_their_environment():
+    t = human(9, r"fakesql11 is slow and fakesql12\FINANCE failed over")
+    found = {x["text"]: x for x in sd.detect_servers(t, dictionary_directory(), rules_only_model())}
+    assert found["fakesql11"]["rule"] == "host:dictionary" and found["fakesql11"]["score"] == 1.0
+    assert found["fakesql11"]["status"] == "known" and found["fakesql11"]["environment"] == "Production"
+    pair = found[r"fakesql12\FINANCE"]
+    assert pair["rule"] == "host:dictionary" and pair["kind"] == "host_instance" and pair["environment"] == "uat"
+
+
+def test_dictionary_pass_needs_a_cue_for_word_like_names():
+    d, m = dictionary_directory(), rules_only_model()
+    m.stop = sd.BUILTIN_STOP | {"payroll"}  # as if frequent in human tickets
+    assert sd.detect_servers(human(9, "payroll ran late"), d, m) == []
+    # a frequent word stays a candidate only after a server word, so prose mentions are not training labels
+    know = m.knowledge(d)
+    assert not any(c["host_ok"] for c in sd.ticket_candidates(human(9, "payroll ran late"), know) if c["host"] == "payroll")
+    found = sd.detect_servers(human(9, "please reboot server payroll"), d, m)
+    assert [(x["text"], x["rule"]) for x in found] == [("payroll", "host:dictionary")]
+    # without a cue an upper-case known instance falls back to the 0.95 known-name rule
+    found = sd.detect_servers(human(9, "FINANCE is slow"), d, m)
+    assert [(x["rule"], x["score"]) for x in found] == [("instance:known_name", 0.95)]
+    found = sd.detect_servers(human(9, "the FINANCE instance is slow"), d, m)
+    assert [(x["text"], x["rule"], x["host"]) for x in found] == [("FINANCE", "instance:dictionary", "fakesql12")]
+
+
+def test_word_like_names_known_only_from_dw_servers_are_not_host_candidates():
+    d = dictionary_directory()
+    _, know = d, sd.Knowledge(d, sd.BUILTIN_STOP)
+    cands = sd.ticket_candidates(human(9, "appmain and fakeapp03 are slow; Server=appmain;"), know)
+    # a strong context (connection string) still makes it a host candidate
+    assert [(c["text"], c["in_conn"]) for c in cands if c["host_ok"]] == [("fakeapp03", False), ("appmain", True)]
+    assert sd.ticket_candidates(human(9, "appmain is slow"), know) == []
+    # another client's ticket does not inherit the suppression
+    assert cands_by_text(human(9, "appmain is slow", org="999", name="Other"), know)["appmain"]["host_ok"]
+
+
 def test_thresholds_are_chosen_without_rule_matches():
     recs = [{"label": "host", "ph": 0.95, "pi": 0.0, "rule": "host:port"} for _ in range(50)]
     recs += [{"label": "host", "ph": 0.6, "pi": 0.0, "rule": None}, {"label": "none", "ph": 0.3, "pi": 0.0, "rule": None}]

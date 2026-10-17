@@ -147,6 +147,18 @@ def test_page_has_both_inputs():
     assert "http://" not in html.replace("http://127.0.0.1", "")  # loads nothing from the network
 
 
+def test_page_explains_the_layers_with_a_made_up_example():
+    html = ui.PAGE_PATH.read_text(encoding="utf-8")
+    for needle in ('id="tab-how"', 'id="panel-how"', "renderHow", "host:dictionary", "instance:dictionary"):
+        assert needle in html
+    # the example's rule names are ones the detector can produce
+    import re
+    import server_detector as sd
+    source = open(sd.__file__, encoding="utf-8").read()
+    for rule in set(re.findall(r'rule: "((?:host|instance):[a-z_]+)"', html)):
+        assert f'"{rule}"' in source
+
+
 def test_alert_catalog_has_one_example_per_type():
     from tests.test_alert_layouts import LABELED, MARKDOWN
     tickets = [make_ticket(i, f"Alert #{i} - FD - SQL Agent Job Failure", LABELED + "x" * i, organization_id=str(i % 2),

@@ -80,6 +80,12 @@ INSTANCE_CUES = {"instance", "instances", "service", "services"}
 # Rules: unambiguous wording that marks a host or an instance. A rule match scores RULE_SCORE, so it is
 # detected at any threshold up to that; the model scores everything else.
 RULE_SCORE = 0.95
+# A confirmed name of the ticket's client (see LocalServerDirectory) found by the dictionary pass scores
+# this, so it is detected whatever the model and the thresholds say.
+DICTIONARY_SCORE = 1.0
+# Name sources the dictionary pass trusts: parsed alert fields and the CMDB export. dw_servers holds
+# time-logging entries, including words and abbreviations that are not servers.
+CONFIRMED_SOURCES = frozenset({"alert", "cmdb"})
 HOST_CUE_WORDS = {"server", "host", "hostname", "servername", "box", "vm", "machine", "node"}
 # Words that sit next to "instance" without being an instance name ("the instance", "on this instance").
 FILLER_WORDS = frozenset("""
@@ -248,6 +254,19 @@ class ServerDirectory(Protocol):
 
     def client_for(self, ticket: dict) -> str | None: ...  # the ticket's client key, as Cmdb.for_ticket picks it
 
+    def confirmed_hosts(self, client_key: str | None = None) -> list[str]: ...  # hosts from alerts or the CMDB
+
+    def confirmed_instances(self, client_key: str | None = None) -> list[tuple[str, str]]: ...  # pairs, same sources
+
+    def environment(self, host: str, client_key: str | None) -> str | None: ...  # most often given environment
+
+
+def alert_environment(ticket: dict) -> str | None:
+    """The environment an alert names: the collector table's Environment Name or Grafana's env label."""
+    fields = ticket.get("alert_fields") or {}
+    value = (fields.get("environment") or fields.get("env") or "").strip()
+    return value or None
+
 
 def ticket_client_keys(ticket: dict) -> tuple[str | None, str | None]:
     org = str(ticket.get("organization_id") or "").strip() or None
@@ -258,15 +277,20 @@ def ticket_client_keys(ticket: dict) -> tuple[str | None, str | None]:
 class LocalServerDirectory:
     """Known names from local sources: server-shaped alert fields, dw_servers and data/instances.csv.
     Each client is keyed by its Zendesk organization id, or by its name when it has none; a name seen
-    with an id is an alias for that id."""
+    with an id is an alias for that id. Names from alert fields and the CMDB export are also kept as
+    confirmed (CONFIRMED_SOURCES), with the environment those sources give."""
 
     def __init__(self):
         self._hosts: dict[str, set[str]] = defaultdict(set)
         self._pairs: dict[str, set[tuple[str, str]]] = defaultdict(set)
+        self._confirmed_hosts: dict[str, set[str]] = defaultdict(set)
+        self._confirmed_pairs: dict[str, set[tuple[str, str]]] = defaultdict(set)
+        self._env: dict[tuple[str, str], Counter] = defaultdict(Counter)  # (client, host) -> environments
         self._alias: dict[str, str] = {}
         self.skipped = 0  # references that were not server-shaped
 
-    def add(self, org: str | None, name_key: str | None, parsed: ParsedName) -> None:
+    def add(self, org: str | None, name_key: str | None, parsed: ParsedName, source: str = "dw",
+            environment: str | None = None) -> None:
         key = org or name_key
         if not key:
             return
@@ -275,11 +299,20 @@ class LocalServerDirectory:
         self._hosts[key].add(parsed.host)
         if parsed.instance:
             self._pairs[key].add((parsed.host, parsed.instance))
+        if source in CONFIRMED_SOURCES:
+            self._confirmed_hosts[key].add(parsed.host)
+            if parsed.instance:
+                self._confirmed_pairs[key].add((parsed.host, parsed.instance))
+            if environment:
+                self._env[(key, parsed.host)][environment] += 1
 
     def add_ticket(self, ticket: dict) -> None:
         org, name_key = ticket_client_keys(ticket)
-        for parsed in ticket_names(ticket):
-            self.add(org, name_key, parsed)
+        for parsed in ticket_names({"dw_servers": ticket.get("dw_servers")}):
+            self.add(org, name_key, parsed, "dw")
+        env = alert_environment(ticket)
+        for parsed in ticket_names({"alert_fields": ticket.get("alert_fields")}):
+            self.add(org, name_key, parsed, "alert", env)
 
     def add_instances_csv(self, path: Path) -> None:
         import csv
@@ -291,7 +324,8 @@ class LocalServerDirectory:
                     continue
                 org = (row.get("zendesk_organization_id") or "").strip() or None
                 name = (row.get("client_name") or "").strip().lower()
-                self.add(org, f"name:{name}" if name else None, parsed)
+                self.add(org, f"name:{name}" if name else None, parsed, "cmdb",
+                         (row.get("environment") or "").strip() or None)
 
     @classmethod
     def from_sources(cls, tickets: list[dict], instances_path: Path | None = INSTANCES_PATH) -> "LocalServerDirectory":
@@ -306,14 +340,17 @@ class LocalServerDirectory:
         """A copy with the given hosts (and their pairs) and instance names removed."""
         d = LocalServerDirectory()
         d._alias = dict(self._alias)
-        for key, hs in self._hosts.items():
-            kept = {h for h in hs if h not in hosts}
-            if kept:
-                d._hosts[key] = kept
-        for key, ps in self._pairs.items():
-            kept = {(h, i) for h, i in ps if h not in hosts and i not in instances}
-            if kept:
-                d._pairs[key] = kept
+        for src, dst in ((self._hosts, d._hosts), (self._confirmed_hosts, d._confirmed_hosts)):
+            for key, hs in src.items():
+                kept = {h for h in hs if h not in hosts}
+                if kept:
+                    dst[key] = kept
+        for src, dst in ((self._pairs, d._pairs), (self._confirmed_pairs, d._confirmed_pairs)):
+            for key, ps in src.items():
+                kept = {(h, i) for h, i in ps if h not in hosts and i not in instances}
+                if kept:
+                    dst[key] = kept
+        d._env.update({k: Counter(v) for k, v in self._env.items() if k[1] not in hosts})
         return d
 
     def _keys(self, client_key: str | None) -> list[str]:
@@ -337,6 +374,19 @@ class LocalServerDirectory:
 
     def instances(self, client_key: str | None = None) -> list[tuple[str, str]]:
         return sorted({p for k in self._keys(client_key) for p in self._pairs.get(k, ())})
+
+    def confirmed_hosts(self, client_key: str | None = None) -> list[str]:
+        return sorted({h for k in self._keys(client_key) for h in self._confirmed_hosts.get(k, ())})
+
+    def confirmed_instances(self, client_key: str | None = None) -> list[tuple[str, str]]:
+        return sorted({p for k in self._keys(client_key) for p in self._confirmed_pairs.get(k, ())})
+
+    def environment(self, host: str, client_key: str | None) -> str | None:
+        """The environment alerts or the CMDB give most often for the host (ties: alphabetical)."""
+        envs = Counter()
+        for k in self._keys(client_key):
+            envs.update(self._env.get((k, host), {}))
+        return min(envs, key=lambda e: (-envs[e], e)) if envs else None
 
     def instance_names(self) -> Counter:
         return Counter(i for _, i in {p for ps in self._pairs.values() for p in ps})
@@ -375,6 +425,9 @@ class LocalServerDirectory:
                 "pairs": len({p for ps in self._pairs.values() for p in ps}), "instance_names": len(names),
                 "names_on_several_hosts": sum(1 for n in names.values() if n > 1),
                 "names_at_several_clients": sum(1 for n in by_client.values() if n > 1),
+                "confirmed_hosts": len({h for hs in self._confirmed_hosts.values() for h in hs}),
+                "confirmed_pairs": len({p for ps in self._confirmed_pairs.values() for p in ps}),
+                "hosts_with_environment": len({h for _, h in self._env}),
                 "skipped_references": self.skipped}
 
 
@@ -396,6 +449,7 @@ class CmdbApiDirectory:
         raise NotImplementedError("The CMDB API does not exist yet; use LocalServerDirectory")
 
     hosts = instances = instance_names = instance_clients = hosts_with_instance = lookup = clients = client_for = _todo
+    confirmed_hosts = confirmed_instances = environment = _todo
 
 
 # --- Client naming conventions -------------------------------------------------
@@ -434,6 +488,7 @@ class NameProfile:
 
 
 EMPTY_PROFILE = NameProfile(())
+EMPTY_DICTIONARY = (frozenset(), frozenset(), frozenset())
 
 
 class Knowledge:
@@ -451,6 +506,17 @@ class Knowledge:
                 self.inst_hosts_by_client[i][client] += 1
         self.known_instances = frozenset(self.inst_hosts)
         self.all_hosts = frozenset(directory.hosts())
+        # The dictionary pass: each client's confirmed hosts, (host, instance) pairs and instance names
+        self.confirmed: dict[str, tuple[frozenset, frozenset, frozenset]] = {}
+        # Each client's word-like hosts (letters only) known from dw_servers alone; against hand labels
+        # none of their detections were servers, so they are not host candidates without a strong context
+        self.unconfirmed_words: dict[str, frozenset] = {}
+        for client in directory.clients():
+            hosts = frozenset(directory.confirmed_hosts(client))
+            pairs = frozenset(directory.confirmed_instances(client))
+            self.confirmed[client] = (hosts, pairs, frozenset(i for _, i in pairs))
+            self.unconfirmed_words[client] = frozenset(h for h in set(directory.hosts(client)) - hosts
+                                                       if h.isalpha())
         self.profiles: dict[str, dict[str, NameProfile]] = {}
         self.prefix_clients = {"host": defaultdict(set), "instance": defaultdict(set)}
         self.pattern_clients = {"host": defaultdict(set), "instance": defaultdict(set)}
@@ -482,6 +548,10 @@ class Knowledge:
             relation, known = near_match(name, self.profile(client, "host").names)
             self._cache[key] = known if relation in ("typo", "sibling") else None
         return self._cache[key]
+
+    def dictionary(self, client: str | None) -> tuple[frozenset, frozenset, frozenset]:
+        """(hosts, (host, instance) pairs, instance names) confirmed for the client; empty when unknown."""
+        return self.confirmed.get(client, EMPTY_DICTIONARY) if client else EMPTY_DICTIONARY
 
     def profile(self, client: str | None, kind: str) -> NameProfile:
         return self.profiles.get(client, {}).get(kind, EMPTY_PROFILE) if client else EMPTY_PROFILE
@@ -637,8 +707,9 @@ def ticket_candidates(ticket: dict, know: Knowledge, *, alert_context: str = "st
         if strip:
             window = [w for w in window if w not in LABEL_WORDS]
         window_cue = any(w in INSTANCE_CUES or w.startswith(SERVICE_PREFIXES) for w in window)
+        host_cue = _after_host_word(*_previous_words(words, ti))
         for s, e, flags in parts:
-            c = _candidate(text, s, e, flags, know, window_cue, conn)
+            c = _candidate(text, s, e, flags, know, window_cue, conn, client, host_cue)
             if not c:
                 continue
             c.update(ti=ti, sent=bisect.bisect_left(breaks, s), ctx=" ".join(window))
@@ -649,7 +720,8 @@ def ticket_candidates(ticket: dict, know: Knowledge, *, alert_context: str = "st
     return cands
 
 
-def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, window_cue: bool, conn) -> dict | None:
+def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, window_cue: bool, conn,
+               client: str | None = None, host_cue: bool = False) -> dict | None:
     part = text[s:e]
     parsed = parse_server_name(part)
     if not parsed:
@@ -672,8 +744,13 @@ def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, win
     is_file = dotted and head.rsplit(".", 1)[-1].lower() in FILE_EXTS
     email = text[e:e + 1] == "@" or text[max(0, s - 1):s] == "@"
     strong = in_conn or in_unc or base["has_port"]
+    # A confirmed host of the client stays a candidate even when it is a frequent word, if it has a digit
+    # or punctuation or follows a server word (so prose mentions of a word-like name do not become noisy
+    # training labels); a word-like host known only from dw_servers needs a strong context
+    confirmed = host in know.dictionary(client)[0] and (not host.isalpha() or host_cue)
+    unconfirmed_word = bool(client) and host in know.unconfirmed_words.get(client, ())
     host_ok = (host_name_ok(host) and not is_file and not email and host != "localhost"
-               and (strong or host not in know.stop))
+               and (strong or confirmed or (host not in know.stop and not unconfirmed_word)))
     cue = window_cue or base["service"] or (text[max(0, s - 1):s] == "\\" and not in_unc)
     inst_ok = (not dotted and not base["has_port"] and not in_unc and not email and bool(BARE_INSTANCE_RE.match(part))
                and bool(re.search(r"[A-Za-z]", part))
@@ -693,6 +770,20 @@ def _sql_port(text: str, s: int, e: int, part: str) -> bool:
     return bool(m) and m.group(1) in ("1433", "1434")
 
 
+def _previous_words(words: list[str], ti: int) -> tuple[str, str]:
+    """The two words before token ti; 'Host(s): NAME' and "server's NAME" split off an 's', which is skipped."""
+    prev1 = words[ti - 1] if ti >= 1 else ""
+    prev2 = words[ti - 2] if ti >= 2 else ""
+    if prev1 == "s" and prev2 in HOST_CUE_WORDS:
+        prev1, prev2 = prev2, words[ti - 3] if ti >= 3 else ""
+    return prev1, prev2
+
+
+def _after_host_word(prev1: str, prev2: str) -> bool:
+    """True after server, host, vm and the like, or after 'server on'."""
+    return prev1 in HOST_CUE_WORDS or (prev1 == "on" and prev2 in HOST_CUE_WORDS)
+
+
 def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | None = None) -> str | None:
     """The name of the rule that marks this candidate as a host or an instance, or None. Instance
     rules: an MSSQL$ or SQLAgent$ service suffix, '<name> instance', 'instance <name>' and 'instance
@@ -701,23 +792,34 @@ def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | Non
     digit after server, host, vm and the like, or after 'instance on'. Alert template lines
     ('Instance SQL01') are left to the model.
 
-    Known names of the ticket's client, as a backup to the model: a known host with a digit (the
+    The dictionary pass comes first and scores DICTIONARY_SCORE: a confirmed host of the ticket's
+    client (named in its alerts or the CMDB export), written alone or as HOST\\INSTANCE; a host made of
+    letters only also needs a server word before it (against hand labels, 39% of letter-only alert
+    hosts were servers where they occurred, against 93% of the others). A confirmed instance name of
+    the client counts only next to an instance cue (before this rule, detections of such names were
+    0 of 12 correct against hand labels).
+
+    Other known names of the client, as a backup to the model: a known host with a digit (the
     directory holds digit-free abbreviations and words from dw_servers; against hand labels those
-    matched correctly 16% of the time, against 75% with a digit); a near known host (one edit with the
-    same pattern, or only trailing digits differ; 5 or more characters with a digit); and a known
+    matched correctly 16% of the time, against 75% with a digit); a near known host (one edit with
+    the same pattern, or only trailing digits differ; 5 or more characters with a digit); and a known
     instance name written in upper case (instance names are often ordinary words, so lower case
-    'reports' in running text does not count). A port counts only when written the SQL Server way."""
-    prev1 = words[ti - 1] if ti >= 1 else ""
-    prev2 = words[ti - 2] if ti >= 2 else ""
+    'reports' in running text does not count; dropping this rule halved correct bare-instance pairing
+    on the test file). A port counts only when written the SQL Server way."""
+    prev1, prev2 = _previous_words(words, ti)
     next1 = words[ti + 1] if ti + 1 < len(words) else ""
-    if prev1 == "s" and prev2 in HOST_CUE_WORDS:  # "Host(s): NAME" and "server's NAME" split off an "s"
-        prev1, prev2 = prev2, words[ti - 3] if ti >= 3 else ""
     name = c["host"]
     has_digit = any(ch.isdigit() for ch in name)
+    dict_hosts, _, dict_instances = know.dictionary(client)
+    host_cue = _after_host_word(prev1, prev2)
+    if c["host_ok"] and name in dict_hosts and (c["kind"] == "host_instance" or not name.isalpha() or host_cue):
+        return "host:dictionary"
     own_hosts = know.profile(client, "host").names
     if c["kind"] == "token" and c["host_ok"] and has_digit and name in own_hosts:
         return "host:known_name"
     if c["inst_ok"] and c["kind"] == "token" and name not in FILLER_WORDS:
+        if name in dict_instances and c["cue"] and not c["after_label"]:
+            return "instance:dictionary"
         if c["service"]:
             return "instance:service_suffix"
         # Next to "instance", ordinary words are mostly adjectives ("managed instance", "instance
@@ -987,7 +1089,8 @@ class ServerModel:
 
     def scores(self, cands: list[dict]) -> np.ndarray:
         """(n, 2) probabilities of host and instance; a class a candidate is not eligible for is 0. A rule
-        match (see _rule) scores at least RULE_SCORE for its class and 0 for the other."""
+        match (see _rule) scores at least RULE_SCORE for its class (DICTIONARY_SCORE for the dictionary
+        pass) and 0 for the other."""
         if not cands:
             return np.zeros((0, 2))
         p = self.main.proba(cands)
@@ -1003,8 +1106,9 @@ class ServerModel:
         rules = [c.get("rule") or "" for c in cands]
         host_rule = np.array([r.startswith("host:") for r in rules])
         inst_rule = np.array([r.startswith("instance:") for r in rules])
-        host = np.where(host_rule, np.maximum(host, RULE_SCORE), np.where(inst_rule, 0.0, host))
-        inst = np.where(inst_rule, np.maximum(inst, RULE_SCORE), np.where(host_rule, 0.0, inst))
+        floor = np.array([DICTIONARY_SCORE if r.endswith(":dictionary") else RULE_SCORE for r in rules])
+        host = np.where(host_rule, np.maximum(host, floor), np.where(inst_rule, 0.0, host))
+        inst = np.where(inst_rule, np.maximum(inst, floor), np.where(host_rule, 0.0, inst))
         return np.column_stack([host, inst])
 
 
@@ -1036,7 +1140,8 @@ def _correct(name: str, known, status: str) -> tuple[str, str, str | None, str |
 def detect_servers(ticket: dict, directory: ServerDirectory, model: ServerModel, *,
                    host_threshold: float | None = None, instance_threshold: float | None = None) -> list[dict]:
     """Hosts, HOST\\INSTANCE names and bare instances in one ticket. Offsets are into the field named
-    by 'field' (subject or description)."""
+    by 'field' (subject or description). 'environment' is the one alerts or the CMDB give for the
+    resolved host, when known."""
     th_h = model.host_threshold if host_threshold is None else host_threshold
     th_i = model.instance_threshold if instance_threshold is None else instance_threshold
     know = model.knowledge(directory)
@@ -1081,6 +1186,7 @@ def detect_servers(ticket: dict, directory: ServerDirectory, model: ServerModel,
                            client_instance_names)
     for d in found:
         del d["_ti"], d["_sent"]
+        d["environment"] = directory.environment(d["host"], client) if d["host"] else None
     return found
 
 
