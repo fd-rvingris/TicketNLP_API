@@ -21,6 +21,8 @@ from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_te
 from sklearn.pipeline import Pipeline
 
 from common import DATA_DIR, REPORTS_DIR, fmt_pct, md_table, now_iso, read_jsonl
+from text_clean import clean_text
+from type_rules import RULES, apply_rules
 
 OTHER = "(merged rare)"  # not "Other", which is a real Zendesk category
 DEFAULT_TARGETS = ["zendesk_type", "category"]
@@ -45,6 +47,11 @@ def parse_args(argv=None):
     p.add_argument("--folds", type=int, default=5, help="cross-validation folds for --labels")
     p.add_argument("--label-min-count", type=int, default=5,
                    help="with --labels, classes with fewer labeled tickets are merged")
+    p.add_argument("--clean", action="store_true",
+                   help="remove email boilerplate (text_clean.py) before the model reads the text; the keyword "
+                        "rules always read cleaned text")
+    p.add_argument("--no-rules", action="store_true",
+                   help="with --labels, leave out the keyword rules (type_rules.py) that run before the model")
     return p.parse_args(argv)
 
 
@@ -82,10 +89,18 @@ def redundancy(tickets: list[dict], a: str, b: str) -> dict:
 # --- Model -----------------------------------------------------------------
 
 
-def features(tickets: list[dict], max_chars: int) -> np.ndarray:
-    """Two text columns, subject and description, as a 2-D object array."""
-    return np.array([[t.get("subject") or "", (t.get("description") or "")[:max_chars]] for t in tickets],
-                    dtype=object)
+def features(tickets: list[dict], max_chars: int, clean: bool = False) -> np.ndarray:
+    """Two text columns, subject and description, as a 2-D object array. With clean, email boilerplate
+    is removed first (text_clean.py); ticket_types.py scores with the same setting it trained with.
+    Off by default: on Claude's 600 labels, averaged over five cross-validation seeds, cleaning lowered
+    type accuracy from 74.5% to 73.8%."""
+    rows = []
+    for t in tickets:
+        subject, desc = t.get("subject") or "", t.get("description") or ""
+        if clean:
+            subject, desc = clean_text(subject, desc)
+        rows.append([subject, desc[:max_chars]])
+    return np.array(rows, dtype=object).reshape(len(rows), 2)
 
 
 def build_model(seed: int) -> Pipeline:
@@ -144,7 +159,7 @@ def top_confusions(y_true: list[str], y_pred: list[str], n: int = 15) -> list[tu
 
 
 def run_target(target: str, train: list[dict], test: list[dict], *, min_count: int, sizes: list[int],
-               max_chars: int, seed: int) -> dict:
+               max_chars: int, seed: int, clean: bool = False) -> dict:
     """Train and score one target over the learning curve sizes. Tickets without the label are left out."""
     train = [t for t in train if weak_label(t, target)]
     test_all = test
@@ -153,7 +168,7 @@ def run_target(target: str, train: list[dict], test: list[dict], *, min_count: i
     kept = kept_classes(raw_train, min_count)
     y_train = [merge_label(v, kept) for v in raw_train]
     y_test = [merge_label(weak_label(t, target), kept) for t in test]
-    X_train, X_test = features(train, max_chars), features(test, max_chars)
+    X_train, X_test = features(train, max_chars, clean), features(test, max_chars, clean)
     masks = segment_masks(test)
 
     majority = Counter(y_train).most_common(1)[0][0]
@@ -189,24 +204,65 @@ def run_target(target: str, train: list[dict], test: list[dict], *, min_count: i
 LABEL_TARGETS = ("primary_type", "intent")
 
 
+UNCERTAIN_GRID = [(p, g) for p in (0.0, 0.25, 0.30, 0.35, 0.40) for g in (0.0, 0.05, 0.10, 0.15)
+                  if (p, g) != (0.0, 0.0)]
+
+
+def uncertainty_split(correct: np.ndarray, p_top: np.ndarray, gap: np.ndarray) -> list[dict]:
+    """For each (top probability, gap) threshold pair: the share of tickets flagged uncertain (top below
+    p, or within gap of the second) and the accuracy of the flagged and the other tickets."""
+    out = []
+    for p, g in UNCERTAIN_GRID:
+        flag = (p_top < p) | (gap < g)
+        out.append({"p": p, "gap": g, "flagged": int(flag.sum()), "share": float(flag.mean()) if len(flag) else 0.0,
+                    "acc_flagged": float(correct[flag].mean()) if flag.any() else None,
+                    "acc_rest": float(correct[~flag].mean()) if (~flag).any() else None})
+    return out
+
+
 def run_labeled(target: str, tickets: list[dict], labels: dict[str, dict], *, min_count: int, folds: int,
-                max_chars: int, seed: int) -> dict:
+                max_chars: int, seed: int, clean: bool = False, rules: list | None = None) -> dict:
     """Cross-validated predictions of one label field over the labeled tickets. Classes with fewer than
-    min_count tickets are merged. Scored overall and split by the label's own confidence."""
+    min_count tickets are merged. Scored overall and split by the label's own confidence. With rules
+    (type_rules.RULES), a rule that fires on a ticket's cleaned text replaces the model's type; the rules
+    are fixed patterns, not fitted, so every ticket is still scored by a model that never saw it."""
     rows = [(t, labels[str(t["ticket_id"])]) for t in tickets if str(t["ticket_id"]) in labels]
     raw = [lab[target] for _, lab in rows]
     kept = kept_classes(raw, min_count)
     y = [merge_label(v, kept) for v in raw]
-    X = features([t for t, _ in rows], max_chars)
+    X = features([t for t, _ in rows], max_chars, clean=clean)
     cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
-    y_pred = list(cross_val_predict(build_model(seed), X, y, cv=cv))
+    proba = cross_val_predict(build_model(seed), X, y, cv=cv, method="predict_proba")
+    classes = np.unique(np.array(y, dtype=object))
+    order = np.argsort(-proba, axis=1)
+    model_pred = [str(c) for c in classes[order[:, 0]]]
+    p_top = proba[np.arange(len(rows)), order[:, 0]]
+    gap = p_top - proba[np.arange(len(rows)), order[:, 1]]
+    y_pred, fired = list(model_pred), [None] * len(rows)
+    if rules:
+        for i, (t, _) in enumerate(rows):
+            hit = apply_rules(*clean_text(t.get("subject") or "", t.get("description") or ""), rules)
+            if hit:
+                y_pred[i], fired[i] = merge_label(hit[0], kept), hit[1]
     conf = np.array([lab.get("confidence") == "high" for _, lab in rows])
     masks = {"all": np.ones(len(rows), dtype=bool), "high confidence": conf, "medium or low": ~conf}
     majority = Counter(y).most_common(1)[0][0]
-    return {"target": target, "tickets": len(rows), "classes_kept": sorted(kept),
+    rule_stats = []
+    for name, _ in rules or []:
+        idx = [i for i, f in enumerate(fired) if f == name]
+        right = sum(1 for i in idx if y_pred[i] == y[i])
+        rule_stats.append({"rule": name, "fires": len(idx), "correct": right,
+                           "precision": right / len(idx) if idx else None,
+                           "model_correct": sum(1 for i in idx if model_pred[i] == y[i]),
+                           "misses": Counter(y[i] for i in idx if y_pred[i] != y[i]).most_common()})
+    by_model = np.array([f is None for f in fired])
+    correct = np.array([a == b for a, b in zip(y, y_pred)])
+    return {"target": target, "tickets": len(rows), "classes_kept": sorted(kept), "clean": clean,
             "merged_values": sorted(set(raw) - kept), "merged_tickets": sum(1 for v in raw if v not in kept),
             "majority_class": majority, "majority": score(y, [majority] * len(y), masks),
-            "model": score(y, y_pred, masks), "per_class": per_class(y, y_pred), "confusions": top_confusions(y, y_pred)}
+            "model": score(y, y_pred, masks), "model_alone": score(y, model_pred, masks) if rules else None,
+            "rules": rule_stats, "per_class": per_class(y, y_pred), "confusions": top_confusions(y, y_pred),
+            "uncertainty": uncertainty_split(correct[by_model], p_top[by_model], gap[by_model])}
 
 
 def render_labeled(results: list[dict], args, missing: int) -> str:
@@ -214,7 +270,9 @@ def render_labeled(results: list[dict], args, missing: int) -> str:
         "# Baseline on labeled tickets: TF-IDF and logistic regression", "",
         f"Generated {now_iso()}. Labels {args.labels}; tickets from {args.train.name} and {args.test.name} "
         f"({missing:,} labeled tickets not found in them). {args.folds}-fold stratified cross-validation, seed "
-        f"{args.seed}. Same features as the weak-label baseline. Classes with fewer than {args.label_min_count} "
+        f"{args.seed}. Same features as the weak-label baseline; email boilerplate "
+        f"{'removed (--clean)' if args.clean else 'kept for the model'}; keyword rules, which read cleaned text, "
+        f"{'off (--no-rules)' if args.no_rules else 'on for the type (type_rules.py)'}. Classes with fewer than {args.label_min_count} "
         f"labeled tickets are merged into {OTHER}.", "",
         "This measures how well the label set's classes separate from the ticket text alone. It sets the bar an "
         "LLM classifier should clear, and low per-class F1 points at types the text cannot tell apart.", "",
@@ -229,6 +287,23 @@ def render_labeled(results: list[dict], args, missing: int) -> str:
                      [[name, *(f"{fmt_pct(res[s]['accuracy'])} / {fmt_pct(res[s]['macro_f1'])}" for s in res)]
                       for name, res in (("majority class", r["majority"]), ("model", r["model"]))]), "",
             "Each cell is accuracy / macro F1. 'High confidence' uses the labeler's own confidence.", "",
+        ]
+        if r["model_alone"]:
+            lines += [f"Without the keyword rules the model alone scores {fmt_pct(r['model_alone']['all']['accuracy'])}"
+                      f" / {fmt_pct(r['model_alone']['all']['macro_f1'])}.", ""]
+        if r["rules"]:
+            lines += ["### Keyword rules", "",
+                      "Each rule runs before the model; precision is agreement with the label where it fires.", "",
+                      md_table(["rule", "fires", "precision", "model alone right", "labels where wrong"],
+                               [[s["rule"], s["fires"], fmt_pct(s["precision"]), s["model_correct"],
+                                 ", ".join(f"{k} {n}" for k, n in s["misses"]) or "–"] for s in r["rules"]]), ""]
+        lines += [
+            "### Uncertain flag", "",
+            "Model-decided tickets only. A ticket is flagged when the top probability is below p or within gap of "
+            "the second.", "",
+            md_table(["p", "gap", "flagged", "share", "accuracy flagged", "accuracy rest"],
+                     [[f"{u['p']:.2f}", f"{u['gap']:.2f}", u["flagged"], fmt_pct(u["share"]),
+                       fmt_pct(u["acc_flagged"]), fmt_pct(u["acc_rest"])] for u in r["uncertainty"]]), "",
             "### Per class", "", per_class_table(r["per_class"]), "",
         ]
         if r["confusions"]:
@@ -247,12 +322,15 @@ def main_labeled(args) -> None:
     results = []
     for target in LABEL_TARGETS:
         r = run_labeled(target, tickets, labels, min_count=args.label_min_count, folds=args.folds,
-                        max_chars=args.max_chars, seed=args.seed)
+                        max_chars=args.max_chars, seed=args.seed, clean=args.clean,
+                        rules=RULES if target == "primary_type" and not args.no_rules else None)
         results.append(r)
         print(f"{target}: {r['tickets']:,} tickets, {len(r['classes_kept'])} classes  "
               + "  ".join(f"{s} {fmt_pct(r['model'][s]['accuracy'])} / {fmt_pct(r['model'][s]['macro_f1'])}"
                           for s in r["model"])
               + f"  (majority {fmt_pct(r['majority']['all']['accuracy'])}; accuracy / macro F1)")
+        for s in r["rules"]:
+            print(f"  rule {s['rule']}: fires on {s['fires']}, precision {fmt_pct(s['precision'])}")
     if missing:
         print(f"{missing:,} labeled tickets were not in the ticket files")
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -339,7 +417,7 @@ def main(argv=None):
     for target in targets:
         print(f"Training {target} ...")
         r = run_target(target, train, test, min_count=args.min_count, sizes=sizes, max_chars=args.max_chars,
-                       seed=args.seed)
+                       seed=args.seed, clean=args.clean)
         results.append(r)
         print(f"  {'size':>8}  {'all':>15}  {'alerts':>15}  {'human':>15}   (accuracy / macro F1)")
         for label, point in [("majority", r["majority"])] + [(f"{p['size']:,}", p) for p in r["curve"]]:

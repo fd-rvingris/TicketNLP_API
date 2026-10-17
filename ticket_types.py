@@ -2,9 +2,11 @@
 
 Alerts take their type from the alert-name table in the taxonomy notes
 (data/claude_pack/returned/taxonomy_notes.md, "Alert name to v1 type"), looked up by the parsed alert
-family and name. Other tickets, and alerts the table does not decide, are scored by TF-IDF and logistic
-regression trained on a label file (Claude's taxonomy sample labels by default), the same features as
-baseline.py. Used by detector_ui.py's Classify tab.
+family and name. Other tickets, and alerts the table does not know, go to the keyword rules in
+type_rules.py, which read the text with email boilerplate removed (text_clean.py), and then to TF-IDF and
+logistic regression trained on a label file (Claude's taxonomy sample labels by default), the same
+features as baseline.py. A model result whose top probability is low or close to the second is flagged
+uncertain. Used by detector_ui.py's Classify tab.
 
 Commands: train (fit on the label file and save data/models/ticket_types.joblib). Prints counts only,
 never ticket text. Nothing leaves this machine.
@@ -23,6 +25,8 @@ from alert_parser import parse_alert
 from baseline import build_model, features
 from common import DATA_DIR, now_iso, read_jsonl
 from schema import TAXONOMY, TAXONOMY_VERSION
+from text_clean import clean_text
+from type_rules import apply_rules
 
 RETURNED_DIR = DATA_DIR / "claude_pack" / "returned"
 NOTES_PATH = RETURNED_DIR / "taxonomy_notes.md"
@@ -34,6 +38,13 @@ TARGETS = ("primary_type", "intent")
 ALERT_FAMILIES = {"collector", "firing", "backup_exception_report", "volume_capacity", "unparsed"}
 MAX_CHARS = 8000
 TOP_K = 3
+# The model reads the raw text: cleaning it lowered cross-validated type accuracy (see baseline.features)
+MODEL_CLEAN = False
+# A model type is uncertain below this top probability or within this gap of the second. On Claude's 600
+# labels (5-fold cross-validation, seeds 0 to 2) these flag about 30% of model-decided tickets, which are
+# right about 27% of the time against about 89% for the rest.
+UNCERTAIN_P = 0.30
+UNCERTAIN_GAP = 0.05
 # The taxonomy's alert intent rule: fix_incident unless the alert says the condition cleared
 RESOLVED_RE = re.compile(r"(?i)\b(cleared|resolved|succeeded|recovered|back to normal)\b")
 
@@ -77,10 +88,10 @@ def train(tickets: list[dict], labels: dict[str, dict], seed: int = 0) -> dict:
     rows = [(t, labels[str(t["ticket_id"])]) for t in tickets if str(t["ticket_id"]) in labels]
     if not rows:
         raise ValueError("None of the labeled tickets are in the ticket files")
-    X = features([t for t, _ in rows], MAX_CHARS)
+    X = features([t for t, _ in rows], MAX_CHARS, clean=MODEL_CLEAN)
     models = {target: build_model(seed).fit(X, [lab[target] for _, lab in rows]) for target in TARGETS}
     return {"models": models, "tickets": len(rows), "created_at": now_iso(), "taxonomy_version": TAXONOMY_VERSION,
-            "counts": {target: Counter(lab[target] for _, lab in rows) for target in TARGETS}}
+            "clean": MODEL_CLEAN, "counts": {target: Counter(lab[target] for _, lab in rows) for target in TARGETS}}
 
 
 def load_or_train(model_path: Path = MODEL_PATH, labels_path: Path = LABELS_PATH,
@@ -89,9 +100,10 @@ def load_or_train(model_path: Path = MODEL_PATH, labels_path: Path = LABELS_PATH
     there is no label file."""
     if model_path.exists():
         bundle = joblib.load(model_path)
-        if bundle.get("taxonomy_version") == TAXONOMY_VERSION:
+        if bundle.get("taxonomy_version") == TAXONOMY_VERSION and bundle.get("clean", False) == MODEL_CLEAN:
             return bundle
-        log(f"Ticket type model is for taxonomy {bundle.get('taxonomy_version')}; retraining")
+        log(f"Ticket type model is for taxonomy {bundle.get('taxonomy_version')} with cleaning "
+            f"{bundle.get('clean', False)}; retraining")
     if not labels_path.exists():
         log(f"Ticket types: no label file at {labels_path}; the Classify tab is off")
         return None
@@ -115,17 +127,43 @@ def _top(model, X, k: int = TOP_K) -> list[dict]:
 # --- Classification --------------------------------------------------------------------
 
 
+def uncertainty(candidates: list[dict], has_subject: bool = True) -> tuple[bool, str]:
+    """Whether the model's top type is uncertain (top probability below UNCERTAIN_P or within
+    UNCERTAIN_GAP of the second) and a short reason."""
+    top = candidates[0]
+    second = candidates[1] if len(candidates) > 1 else {"id": "", "p": 0.0}
+    advice = "check by hand" if has_subject else "add a subject or check by hand"
+    if top["p"] - second["p"] < UNCERTAIN_GAP:
+        return True, f"close call between {top['id']} and {second['id']}; {advice}"
+    if top["p"] < UNCERTAIN_P:
+        return True, f"low confidence: {top['id']} at {top['p']:.0%}, {second['id']} next at {second['p']:.0%}; {advice}"
+    return False, ""
+
+
+def _rule_or_model(out: dict, subject: str, text: str) -> None:
+    """A keyword rule's type when one fires on the cleaned text, else the model's, flagged when uncertain."""
+    hit = apply_rules(*clean_text(subject, text))
+    if hit:
+        out["primary_type"], out["type_source"] = hit[0], f"rule:{hit[1]}"
+        out["uncertain"], out["uncertain_reason"] = False, ""
+        return
+    out["primary_type"], out["type_source"] = out["type_candidates"][0]["id"], "model"
+    out["uncertain"], out["uncertain_reason"] = uncertainty(out["type_candidates"], bool(subject.strip()))
+
+
 def classify(subject: str, text: str, bundle: dict, alert_map: dict) -> dict:
-    """The primary type and intent for one ticket, where each came from, the model's top candidates
-    and, for an alert, its parsed family and name and the table entry it matched."""
-    ticket = {"subject": subject or "", "description": text or ""}
-    X = features([ticket], MAX_CHARS)
+    """The primary type and intent for one ticket, where each came from, the model's top candidates,
+    whether the type is uncertain and why, and, for an alert, its parsed family and name and the table
+    entry it matched. Order: the alert-name table, then the keyword rules, then the model."""
+    subject, text = subject or "", text or ""
+    X = features([{"subject": subject, "description": text}], MAX_CHARS, clean=bundle.get("clean", False))
     type_top, intent_top = _top(bundle["models"]["primary_type"], X), _top(bundle["models"]["intent"], X)
     out = {"primary_type": type_top[0]["id"], "type_source": "model", "type_candidates": type_top,
            "intent": intent_top[0]["id"], "intent_source": "model", "intent_candidates": intent_top,
-           "alert": None, "notes": []}
+           "uncertain": False, "uncertain_reason": "", "alert": None, "notes": []}
     fields = parse_alert(subject, text)
     if not fields:
+        _rule_or_model(out, subject, text)
         return out
     family, name = fields.get("family") or "unparsed", fields.get("alert_name") or ""
     entry = alert_map.get((family, name.lower()))
@@ -133,8 +171,10 @@ def classify(subject: str, text: str, bundle: dict, alert_map: dict) -> dict:
     resolved = bool(RESOLVED_RE.search(f"{subject}\n{text}"))
     out["intent"], out["intent_source"] = ("provide_information" if resolved else "fix_incident"), "alert_rule"
     if entry is None:
-        out["notes"].append("This alert name is not in the taxonomy's alert table, so the model decides the "
-                            "type. The model is trained on human tickets only.")
+        _rule_or_model(out, subject, text)
+        if out["type_source"] == "model":
+            out["notes"].append("This alert name is not in the taxonomy's alert table, so the model decides the "
+                                "type. The model is trained on human tickets only.")
         return out
     out["primary_type"] = entry["type"]
     out["type_source"] = {"Yes": "alert_name", "Partly": "alert_name_partly"}.get(entry["decides"], "alert_default")

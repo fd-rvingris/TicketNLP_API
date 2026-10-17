@@ -181,12 +181,12 @@
     </div>
     <div id="panel-flow" role="tabpanel" aria-labelledby="tab-flow" hidden style="display:none; gap:8px">
       <div class="how">
-        <p>The Classify ticket tab gives every ticket one primary type and one intent from the taxonomy. Alerts are typed by their alert name, because alerts are templated; everything else is typed by a local model that learned from tickets Claude labeled. Nothing is sent to an API.</p>
+        <p>The Classify ticket tab gives every ticket one primary type and one intent from the taxonomy. Alerts are typed by their alert name, because alerts are templated; wording the taxonomy makes unambiguous is typed by keyword rules; everything else is typed by a local model that learned from tickets Claude labeled, and a close call is flagged as uncertain. Nothing is sent to an API.</p>
         <div class="how-legend">
           <span class="l-in"><i></i>Input</span>
           <span class="l-dict"><i></i>Alert-name table</span>
+          <span class="l-rule"><i></i>Rules</span>
           <span class="l-model"><i></i>Local model</span>
-          <span class="l-rule"><i></i>Intent rule</span>
           <span class="l-res"><i></i>Result</span>
         </div>
         <ol class="pipe">
@@ -196,7 +196,7 @@
           </div></li>
           <li class="stage l-in"><div class="node">2</div><div class="layer">
             <div class="layer-head"><h3>Is it an alert?</h3><span class="chip">alert_parser.py</span></div>
-            <p>The alert parser checks the text against the known alert layouts: the collector's table, labeled and Markdown layouts, Grafana firing alerts, backup exception reports and volume capacity checks. If one matches, it reads the alert's family and alert name (for example <code>collector</code> and <code>Long-Running Blocking Chain</code>). If none matches, the ticket goes to the model (step 4).</p>
+            <p>The alert parser checks the text against the known alert layouts: the collector's table, labeled and Markdown layouts, Grafana firing alerts, backup exception reports and volume capacity checks. If one matches, it reads the alert's family and alert name (for example <code>collector</code> and <code>Long-Running Blocking Chain</code>). If none matches, the ticket goes to the keyword rules (steps 4 and 5).</p>
           </div></li>
           <li class="stage l-dict"><div class="node">3</div><div class="layer">
             <div class="layer-head"><h3>Look up the alert name</h3><span class="chip">74 alert names, 6,000 alert tickets</span></div>
@@ -207,28 +207,47 @@
                 <tr><td>Yes</td><td>The table's type is the answer.</td><td class="num">63</td></tr>
                 <tr><td>Partly</td><td>The table's type is used, with a note that the body can move it. For example, an SQL Agent job failure is scheduled_jobs, but a failed DatabaseBackup job belongs in backup_restore. The page shows the note; it does not apply it.</td><td class="num">6</td></tr>
                 <tr><td>No</td><td>The table's default is used with a warning, because the name names no condition. The largest is <code>errors</code> (2,142 tickets), defaulted to monitoring_tooling until someone checks what those alerts contain.</td><td class="num">5</td></tr>
-                <tr><td>Not in the table</td><td>The model decides (step 4), with a warning that it learned from human tickets only.</td><td class="num">–</td></tr>
+                <tr><td>Not in the table</td><td>The keyword rules and then the model decide (steps 4 to 6). When the model decides, a warning says it learned from human tickets only.</td><td class="num">–</td></tr>
               </tbody>
             </table></div>
           </div></li>
-          <li class="stage l-model"><div class="node">4</div><div class="layer">
+          <li class="stage l-rule"><div class="node">4</div><div class="layer">
+            <div class="layer-head"><h3>Strip email boilerplate</h3><span class="chip">text_clean.py</span></div>
+            <p>A copy of the text for the rules drops external-sender banners, confidentiality footers, image and attachment links, URLs, quoted reply history, standalone greetings and sign-offs with the signature under them, the support mailbox name and @-mentions. A line that also carries a server-shaped name, a SQL keyword or an error number is never removed, and if nothing would be left the raw text is used.</p>
+            <p class="meta">The model reads the raw text. Feeding it the cleaned text lowered cross-validated type accuracy (74.5% to 73.8%, averaged over five splits), so cleaning is used only for the rules. The server detector never uses it.</p>
+          </div></li>
+          <li class="stage l-rule"><div class="node">5</div><div class="layer">
+            <div class="layer-head"><h3>Apply the keyword rules</h3><span class="chip">type_rules.py</span></div>
+            <p>Rules taken from the type definitions and tie-breaks run in this order; the first that fires decides the type. Precision is agreement with Claude's labels where the rule fires.</p>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Rule</th><th>Fires on</th><th>Type</th><th class="num">Fires</th><th class="num">Precision</th></tr></thead>
+              <tbody>
+                <tr><td><code>staff_logon</code></td><td>A <code>[Log on to ...]</code> or <code>[Change Password for ...]</code> subject</td><td>staff_access</td><td class="num">39</td><td class="num">100%</td></tr>
+                <tr><td><code>validation_results</code></td><td>A Validation Results report subject</td><td>outage_availability</td><td class="num">16</td><td class="num">100%</td></tr>
+                <tr><td><code>sip_review</code></td><td>A SIP review subject naming one area (Security Audit, Index and Performance, Capacity, DR/HA, Database Maintenance, patching)</td><td>that area's type</td><td class="num">21</td><td class="num">100%</td></tr>
+                <tr><td><code>access_request</code></td><td>Grant, read, write or access wording (READ access, grant, db_datareader, add the login, permission to) plus a login, user, role, schema or service account; not for our own accounts, our collector, change tickets, releases, supplied scripts, or a refresh or restore into another environment</td><td>access_security</td><td class="num">11</td><td class="num">91%</td></tr>
+              </tbody>
+            </table></div>
+          </div></li>
+          <li class="stage l-model"><div class="node">6</div><div class="layer">
             <div class="layer-head"><h3>Score with the local model</h3><span class="chip">ticket_types.py</span></div>
             <ul>
               <li><b>Features:</b> word and two-word phrases (TF-IDF) from the subject and from the body, kept separate.</li>
               <li><b>Model:</b> logistic regression, one for the type and one for the intent. It shows its top three of each with probabilities, so a close second choice is visible.</li>
               <li><b>Training data:</b> Claude's labels on 600 human tickets sampled across the Zendesk categories. Claude applied the selection rules below when labeling; the model learns them only from those examples.</li>
+              <li><b>Uncertain flag:</b> when no rule fired, a type whose probability is below 30%, or within 5 points of the second, is marked uncertain. In cross-validation this flags about 30% of the tickets the model decides; those are right about 27% of the time, against about 89% for the rest. The subject carries a lot of weight, so add it when you have it.</li>
             </ul>
           </div></li>
-          <li class="stage l-rule"><div class="node">5</div><div class="layer">
+          <li class="stage l-rule"><div class="node">7</div><div class="layer">
             <div class="layer-head"><h3>Set the intent</h3></div>
             <ul>
               <li><b>Alerts:</b> fix_incident, or provide_information when the alert says the condition cleared, resolved, succeeded or recovered.</li>
               <li><b>Everything else:</b> the model's intent.</li>
             </ul>
           </div></li>
-          <li class="stage l-res"><div class="node">6</div><div class="layer">
+          <li class="stage l-res"><div class="node">8</div><div class="layer">
             <div class="layer-head"><h3>Show the result</h3></div>
-            <p>The primary type and intent with their definitions, where each came from (alert-name table or model), the model's top three, and for an alert, the table entry it matched.</p>
+            <p>The primary type and intent with their definitions, where each came from (alert-name table, keyword rule or model), an uncertain marker with the reason when the model's choice is a close call, the model's top three, and for an alert, the table entry it matched.</p>
           </div></li>
         </ol>
 
@@ -237,15 +256,15 @@
         <ol id="flow-rules" class="help" style="margin:0; padding-left:20px; display:grid; gap:3px"></ol>
 
         <h3>How accurate is it?</h3>
-        <p class="meta">Measured 2026-10-17 with 5-fold cross-validation on the 600 labeled human tickets (python baseline.py --labels ...). Alerts are not in this measure; their accuracy depends on the alert-name table.</p>
+        <p class="meta">Measured 2026-10-17 with 5-fold cross-validation on the 600 labeled human tickets (python baseline.py --labels ...), keyword rules first and the model for the rest. The rules are fixed patterns, so no ticket is scored by a model that saw it. Alerts are not in this measure; their accuracy depends on the alert-name table.</p>
         <div class="table-wrap"><table>
-          <thead><tr><th></th><th class="num">Accuracy</th><th class="num">Macro F1</th><th class="num">Always guessing the most common</th></tr></thead>
+          <thead><tr><th></th><th class="num">Accuracy</th><th class="num">Macro F1</th><th class="num">Model alone, before the rules</th><th class="num">Always guessing the most common</th></tr></thead>
           <tbody>
-            <tr><td>Type</td><td class="num">73.3%</td><td class="num">65.1%</td><td class="num">11.3%</td></tr>
-            <tr><td>Intent</td><td class="num">83.2%</td><td class="num">67.6%</td><td class="num">34.7%</td></tr>
+            <tr><td>Type</td><td class="num">74.0%</td><td class="num">65.6%</td><td class="num">73.3% / 65.1%</td><td class="num">11.3%</td></tr>
+            <tr><td>Intent</td><td class="num">83.2%</td><td class="num">67.6%</td><td class="num">83.2% / 67.6%</td><td class="num">34.7%</td></tr>
           </tbody>
         </table></div>
-        <p class="meta">Reliable: staff_access, service_admin, assessment_review, capacity_storage, backup_restore. Weak: engine_errors, data_request_query, configuration_change, install_migrate_upgrade, database_refresh, which have few training examples. Where Claude itself was less than confident, the model is right 55% of the time.</p>
+        <p class="meta">The rules raised access_security F1 from 70.0% to 73.2%; staff_access (94.0%) and database_refresh (44.4%) are unchanged and deployment rose from 78.5% to 79.5%. Reliable: staff_access, service_admin, assessment_review, capacity_storage, backup_restore. Weak: engine_errors, data_request_query, configuration_change, install_migrate_upgrade, database_refresh, which have few training examples. Where Claude itself was less than confident, the classifier is right 56.5% of the time.</p>
 
         <h3>Try it</h3>
         <p class="meta">Made-up examples. Each opens the Classify ticket tab with the text filled in.</p>
@@ -1031,7 +1050,12 @@
     alert_name_partly: "alert-name table: the body can change it",
     alert_default: "alert-name table: default, the name does not decide",
     alert_rule: "alert rule: fix_incident unless the alert says it cleared",
+    "rule:staff_logon": "keyword rule: a [Log on to ...] or [Change Password for ...] task is staff_access",
+    "rule:validation_results": "keyword rule: Validation Results reports are always outage_availability",
+    "rule:sip_review": "keyword rule: a SIP review of one area takes that area's type",
+    "rule:access_request": "keyword rule: an access or grant request for a client login, user, role or schema",
   };
+  const sourceText = s => SOURCE_TEXT[s] || (s.startsWith("rule:") ? `keyword rule ${s.slice(5)}` : s);
   const entryOf = (kind, id) => (TAX && TAX[kind].find(t => t.id === id)) || { id, label: id, definition: "" };
 
   async function loadTaxonomy() {
@@ -1084,15 +1108,21 @@
       const r = await post("/api/classify", { text, subject });
       const type = entryOf("types", r.primary_type), intent = entryOf("intents", r.intent);
       const a = r.alert;
+      const byModel = r.type_source === "model";
       $("cls-result").replaceChildren(el("div", { class: "verdict" },
         el("section", { class: "card" }, el("h2", {}, "Primary type"),
-          el("div", { class: "big" }, type.label, " ", el("span", { class: "cls-id meta" }, r.primary_type)),
-          el("div", { class: "meta" }, "From the " + (SOURCE_TEXT[r.type_source] || r.type_source)),
+          el("div", { class: "big" }, type.label, " ", el("span", { class: "cls-id meta" }, r.primary_type),
+            r.uncertain ? el("span", { class: "chip alert", style: "margin-left:8px" }, "Uncertain") : null),
+          r.uncertain ? el("div", { class: "note" }, "Uncertain: " + r.uncertain_reason) : null,
+          !subject.trim() && byModel && !r.uncertain
+            ? el("div", { class: "meta" }, "No subject given. The subject carries a lot of weight; adding it can change the result.") : null,
+          el("div", { class: "meta" }, "From the " + sourceText(r.type_source)),
           el("div", { class: "help" }, type.definition),
-          el("h2", {}, "Model's top types"), candidates(r.type_candidates, "types")),
+          el("h2", {}, byModel ? "Model's top types" : "Model's top types (for reference; not used)"),
+          candidates(r.type_candidates, "types")),
         el("section", { class: "card" }, el("h2", {}, "Intent"),
           el("div", { class: "big" }, intent.label, " ", el("span", { class: "cls-id meta" }, r.intent)),
-          el("div", { class: "meta" }, "From the " + (SOURCE_TEXT[r.intent_source] || r.intent_source)),
+          el("div", { class: "meta" }, "From the " + sourceText(r.intent_source)),
           el("div", { class: "help" }, intent.definition),
           el("h2", {}, "Model's top intents"), candidates(r.intent_candidates, "intents")),
         el("section", { class: "card" }, el("h2", {}, "Alert"),
@@ -1118,6 +1148,13 @@
     ["Alert: body can change it", "Example Client - Alert #43 - FD - SQL Agent Job Failure", COLLECTOR_ALERT("FD - SQL Agent Job Failure")],
     ["Client access request", "Please grant read access",
      "Hi team, can you give the reporting service account db_datareader on the Sales database? Thanks."],
+    ["Access request in an email, no subject", "",
+     "CAUTION: This email originated from outside of the organization. Do not click links or open attachments unless you recognize the sender and know the content is safe.\n\n"
+     + "Hi Fortified Data Support,\n\nCould you please help me get READ access for the schema below, Server=FAKESQL01, Database=FAKE_DB, "
+     + "for the execution user CORP\\svc-fake-batch. Please approve.\n\n![](https://fake.example.com/image001.png)\n\n"
+     + "Thanks,\nJane Doe\nData Engineer | Fake Co\n\nThis message is intended only for the use of the addressee and may contain "
+     + "information that is privileged and confidential. Any disclosure, copying, distribution or use of this message is prohibited."],
+    ["Close call", "", "Can someone look at the Fake_DB database on the test server this week?"],
     ["Patching notice", "Patching this weekend",
      "Reminder: SQL Server cumulative updates will be applied to the production servers Saturday night."],
   ];

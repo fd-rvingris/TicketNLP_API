@@ -201,6 +201,36 @@ tickets. Scores are split by the labeler's own confidence. It shows how well a
 taxonomy's classes separate from the ticket text alone. Report:
 data/reports/baseline-labels-<timestamp>.md.
 
+For the type, the keyword rules in `type_rules.py` run first, as in the
+Classify tab: a rule that fires replaces the model's prediction. The rules are
+fixed patterns, not fitted, so every ticket is still scored by a model that
+never saw it. The report lists each rule's fires and precision against the
+labels, and an uncertain-flag table (accuracy of the tickets the model decides
+when its top probability is below p or within gap of the second, against the
+rest). --no-rules leaves the rules out. --clean has the model read text with
+email boilerplate removed (`text_clean.py`); the rules always read cleaned
+text. `python text_clean.py` measures what the cleaning removes from the
+ticket files, per pattern, as counts only.
+
+Measured 2026-10-17 on Claude's 600 labels (seed 0; each cell accuracy /
+macro F1):
+
+| Change | Type: all | Type: high | Type: medium or low | Intent: all | access_security F1 | staff_access F1 | database_refresh F1 | deployment F1 |
+|---|---|---|---|---|---|---|---|---|
+| Before | 73.3% / 65.1% | 79.2% / 66.2% | 55.1% / 42.0% | 83.2% / 67.6% | 70.0% | 94.0% | 44.4% | 78.5% |
+| Cleaning for the model | 73.3% / 65.3% | 78.8% / 65.8% | 56.5% / 43.5% | 82.7% / 67.4% | 70.9% | 94.1% | 46.2% | 79.5% |
+| Rules (kept) | 74.0% / 65.6% | 79.7% / 66.8% | 56.5% / 43.2% | 83.2% / 67.6% | 73.2% | 94.0% | 44.4% | 79.5% |
+| Both | 73.8% / 65.7% | 79.2% / 66.4% | 57.1% / 44.1% | 82.7% / 67.4% | 72.5% | 94.1% | 46.2% | 79.5% |
+
+Averaged over five cross-validation seeds, cleaning the model's input lowered
+type accuracy from 74.5% to 73.8% (from 75.2% to 74.4% with the rules on), so
+the model reads the raw text and cleaning serves the rules only. The rules
+(staff_logon 39 fires, validation_results 16, sip_review 21, all 100%
+precision; access_request 11 fires, 91%) add 0.7 points of type accuracy.
+The access_request rule was tightened once against the labels (refresh,
+restore, script and narrower staff-account exclusions), so its precision is
+slightly optimistic.
+
 `split_alerts.py` splits a DW2.0 .csv export or a .jsonl ticket file by its
 is_alert column into <name>_alerts and <name>_human files of the same format
 next to it (or in --out-dir), so alerts and human tickets can be trained and
@@ -342,8 +372,14 @@ Classify ticket tab (`#classify`) applies the taxonomy to pasted text locally
 with `ticket_types.py`: a parsed alert takes its type from the alert-name
 table in data/claude_pack/returned/taxonomy_notes.md (and intent
 fix_incident, or provide_information when it says the condition cleared);
-anything else is scored by TF-IDF and logistic regression trained on
-Claude's 600 sample labels. The model is trained on first start and saved to
+anything else goes to the keyword rules in `type_rules.py` (a [Log on to ...]
+task, a Validation Results report, a single-area SIP review, a client access
+request), which read the text with email boilerplate removed, and then to
+TF-IDF and logistic regression trained on Claude's 600 sample labels. A model
+type below 30% probability, or within 5 points of the second, is marked
+uncertain with the reason; in cross-validation those tickets are right about
+27% of the time against about 89% for the rest. The How types are chosen tab
+(`#how-types`) walks through these steps. The model is trained on first start and saved to
 data/models/ticket_types.joblib; `python ticket_types.py train` refits it. Text and tickets stay in memory and on the page; the
 console logs request paths only. Options: --port, --model-path, --train (read
 for client names) and --open.
