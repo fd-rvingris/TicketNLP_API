@@ -260,8 +260,34 @@ and `MCP_ENABLED`. Nothing defaults to a path under data/ except for local runs.
   identities granted access, and the directory refresh as a scheduled Container Apps job. HTTPS ingress only;
   liveness probe /health, readiness probe /ready; minimum one replica to avoid cold starts while
   models load. Note where API Management could sit in front if the auth decision goes that way.
-- Running locally: `python -m api` (Uvicorn on 127.0.0.1:8000) with `AUTH_MODE=none` and
-  `ALLOW_NO_AUTH=true`.
+### 7a. Run, demo and debug locally
+
+The API must be easy to run on this machine for demos and debugging, with the same code paths as
+Azure.
+
+- **One command:** `python -m api --local` starts Uvicorn on 127.0.0.1:8000 with a local profile:
+  models and taxonomy notes from data/models and data/claude_pack/returned, a directory snapshot built
+  from data/instances.csv and the model's alert names on first start (no CMDB), `AUTH_MODE=none`,
+  `/docs` enabled, auto-reload on code changes, and readable console logs. It refuses to bind to
+  anything but loopback without auth. `--auth api_key` runs it with a key from a local `.env` file
+  (gitignored) to demo auth.
+- **Swagger UI:** `/docs` lets you try every endpoint in the browser; every request model has a
+  made-up example filled in, including the access request email from prompt 5.
+- **Example requests:** docs/api-examples.http (VS Code REST Client) and
+  docs/api-examples.ps1 (PowerShell `Invoke-RestMethod`) covering each endpoint, with and without
+  subject and zendeskOrgId, an alert, an auth failure and an oversized body. Made-up text only.
+- **Debugger:** a `.vscode/launch.json` entry "API (local)" that runs the local profile under the
+  debugger, so breakpoints in the service layer, the detector and the classifier work.
+- **Container locally:** `docker compose up` (docker-compose.yml) builds the image and runs it with
+  data/models and a local directory snapshot mounted read-only, to check the Azure image before
+  deploying.
+- **MCP locally:** instructions in docs/api.md for connecting Claude Code or the MCP Inspector to
+  the stdio server and to `http://127.0.0.1:8000/mcp`.
+- **Debug detail:** with `DEBUG_RESPONSES=true` (refused unless `AUTH_MODE=none` on loopback),
+  responses add the detector's scored candidates and the classifier's cleaned text and rule
+  checks, as the detector UI shows them. Off by default and never on in Azure.
+- **The existing detector UI stays the visual demo.** Add a `--api URL` option to detector_ui.py only
+  if it is simple; otherwise note it as a follow-up.
 
 ### 8. Tests
 
@@ -296,6 +322,9 @@ tests/test_ticket_types.py does), not the files in data/:
 - The directory refresh builds, validates and publishes a snapshot from the CSV source, and the API
   picks it up without a restart. The Keystone source is a documented stub.
 - The MCP tools work over stdio and at `/mcp`.
+- `python -m api --local` starts the API on this machine with the local models; the example requests
+  in docs/api-examples.http and docs/api-examples.ps1 all run against it; the VS Code debug entry
+  stops at a breakpoint; `docker compose up` serves the same responses from the container.
 - Finish with a short report: the endpoints and MCP tools, an example request and response with
   made-up data, how to run it locally, the detection change measured with a CSV-built snapshot, what
   we need to learn about the Keystone CMDB API, and what remains for the auth decision, the Azure
