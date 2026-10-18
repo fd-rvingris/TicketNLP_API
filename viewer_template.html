@@ -87,6 +87,10 @@
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
   .seg button { border: 0; background: transparent; padding: 4px 10px; cursor: pointer; }
   .seg button[aria-pressed="true"] { background: var(--accent); color: var(--panel); }
+  .copy-row { display: inline-flex; gap: 6px; }
+  .subject-line { font-weight: 600; overflow-wrap: anywhere; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .copy { border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; padding: 4px 10px; cursor: pointer; }
+  .copy:hover { border-color: var(--accent); }
   .stats { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
   pre.text { margin: 0; font: 13px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
   mark { background: var(--mark); color: inherit; border-radius: 2px; }
@@ -366,6 +370,27 @@
     return card;
   }
 
+  // The clipboard API needs a secure context, which a file:// page may not be; fall back to a hidden
+  // textarea and execCommand("copy") there.
+  async function copyText(text, button, label) {
+    let ok = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); ok = true; }
+    } catch (e) { ok = false; }
+    if (!ok) {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed"; area.style.opacity = "0";
+      document.body.append(area);
+      area.select();
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      area.remove();
+    }
+    button.textContent = ok ? "Copied" : "Copy failed";
+    setTimeout(() => { button.textContent = label; }, 1500);
+  }
+
   function renderDetail() {
     const t = byId.get(state.selected);
     if (!t) {
@@ -379,6 +404,13 @@
     const labels = Object.entries(t.weak_labels || {});
     const dwFields = Object.entries(t.dw_fields || {}).filter(([, v]) => v);
 
+    // Copies the version on screen (masked when "As sent to model" is selected)
+    const copyBtn = (label, value) => {
+      const b = el("button", { type: "button", class: "copy", disabled: !value }, label);
+      b.addEventListener("click", () => copyText(value, b, label));
+      return b;
+    };
+
     const viewBtn = (value, label) => {
       const b = el("button", { type: "button", "aria-pressed": String(state.view === value) }, label);
       b.addEventListener("click", () => { state.view = value; renderDetail(); });
@@ -390,6 +422,7 @@
       el("h2", {}, highlighted(sent ? t.sent_subject : t.subject || "(no subject)")),
       el("div", { class: "card" }, fields([
         ["Ticket", "#" + t.ticket_id],
+        ["Subject", (sent ? t.sent_subject : t.subject) || "(no subject)"],
         ["Client", t.organization_name],
         ["Zendesk org id", t.organization_id],
         ["Created", t.created_at],
@@ -406,9 +439,13 @@
       el("div", { class: "card" },
         el("div", { class: "text-bar" },
           el("div", { class: "seg", role: "group", "aria-label": "Text version" }, viewBtn("sent", "As sent to model"), viewBtn("raw", "As exported")),
+          el("span", { class: "copy-row" }, copyBtn("Copy subject", sent ? t.sent_subject : t.subject),
+            copyBtn("Copy body", text)),
           el("span", { class: "stats" },
             `${fmt(chars)} characters sent · about ${fmt(Math.ceil(chars / 4))} tokens · ` +
             `${t.secrets_masked} secret${t.secrets_masked === 1 ? "" : "s"} masked`)),
+        el("div", { class: "subject-line" }, el("span", { class: "stats" }, "Subject: "),
+          highlighted((sent ? t.sent_subject : t.subject) || "(no subject)")),
         text ? el("pre", { class: "text" }, highlighted(text)) : el("div", { class: "stats" }, "This ticket has no description."))
     ].filter(Boolean));
   }
