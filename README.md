@@ -66,6 +66,8 @@ the output schema and the hand-labeled results.
     python claude_pack.py labels                      # server-labeling batches for a Claude chat (docs/claude-labeling-prompt.md)
     python claude_pack.py taxonomy                    # digest of all tickets for a taxonomy chat (docs/claude-taxonomy-prompt.md)
     python claude_pack.py import-labels data\claude_pack\returned\labels_*.jsonl
+    python claude_pack.py types                       # a round of type-labeling batches for Claude Desktop (see Labeling)
+    python claude_pack.py import-types data\claude_pack\returned\types_round_001_*.jsonl
 
 Runs are resumable: already classified tickets in a run are skipped. A run
 keeps its model, effort, prompt version and taxonomy version; reusing its name
@@ -457,6 +459,34 @@ notes. Fill them in Excel using the ids in taxonomy.json, and close the file
 before the next run. The next `report.py` run computes accuracy, a confusion
 matrix, and per-class precision and recall. Existing human entries are never
 overwritten. Reports are written to data/reports/.
+
+### More type labels from Claude Desktop
+
+The type model learns from Claude's labels. Accuracy was still rising at the
+full 600 (cross-validated type accuracy 57% with 120 training tickets, 66% with
+240, 72% with 360, 74% with 480), so more labels should help. Without API
+access, they come in rounds through Claude Desktop:
+
+    python claude_pack.py types                # writes data\claude_pack\types\round_NNN\
+    python claude_pack.py import-types data\claude_pack\returned\types_round_NNN_*.jsonl
+    python ticket_types.py train               # or restart detector_ui.py, which refits on newer labels
+    python baseline.py --labels data\claude_pack\returned\taxonomy_sample_labels.jsonl data\labels\claude_types.jsonl
+
+A round picks unlabeled human tickets from the training and test exports
+(--tickets, 500), never one already labeled or sent in an earlier round. Half
+(--weak-share) are the tickets the current model leans most toward a weak type
+(database_refresh, engine_errors, data_request_query, configuration_change,
+install_migrate_upgrade) and the rest are random. Each ticket is cleaned of
+email boilerplate (text_clean.py), masked, cut at --max-chars (4,000) and
+written in batches of 50 with a manifest and prompt.md, which is built from
+taxonomy.json and the prompt v2 rules. Follow prompt.md: one Claude Desktop
+Project with the prompt as its instructions, one chat per batch. import-types
+checks every returned line (known ticket, type, intent and confidence),
+appends it to data/labels/claude_types.jsonl with its round, batch and
+taxonomy version, skips repeats, and lists tickets still missing per batch.
+ticket_types.py trains on the taxonomy sample and these labels together, later
+labels winning, and leaves out labels made for another taxonomy version. Keep
+the evaluation export out of the rounds so it stays an independent test.
 
 ## Files that carry forward to Keystone
 

@@ -3,6 +3,7 @@
 import json
 
 import claude_pack as cp
+from common import read_jsonl as common_read
 import server_labels as sl
 from common import make_ticket
 
@@ -81,3 +82,76 @@ def test_check_taxonomy(tmp_path, capsys):
     cp.main(["check-taxonomy", str(path)])
     out = capsys.readouterr().out
     assert "snake_case" in out and "no label" in out and "no 'unknown'" in out
+
+
+# --- Type labeling rounds ------------------------------------------------------------
+
+BANNER = ("CAUTION: This email originated from outside of the organization. Do not click links or open "
+          "attachments unless you recognize the sender and know the content is safe.")
+
+
+def test_type_records_are_cleaned_then_masked_and_cut():
+    t = human(7, f"{BANNER}\r\n\r\nThe backup failed. Password=Hunter2\r\n\r\nThanks,\r\nJane Doe", subject="[EXTERNAL] Backup")
+    r = cp.type_record(t, max_chars=4000)
+    assert r["subject"] == "Backup" and "CAUTION" not in r["description"] and "Jane Doe" not in r["description"]
+    assert "Hunter2" not in r["description"] and "backup failed" in r["description"] and not r["truncated"]
+    assert cp.type_record(t, max_chars=10)["truncated"]
+
+
+class LeansWeak:
+    """A stand-in type model: tickets mentioning 'refresh' lean to database_refresh."""
+    classes_ = ["database_refresh", "performance"]
+
+    def predict_proba(self, X):
+        import numpy as np
+        return np.array([[0.9, 0.1] if "refresh" in (s + d) else [0.1, 0.9] for s, d in X])
+
+
+def test_pick_for_types_skips_labeled_and_alerts_and_over_samples_weak_types():
+    tickets = [human(i, "refresh QA from prod" if i < 3 else "slow query") for i in range(20)]
+    tickets.append(make_ticket("a1", "Alert", "refresh", is_alert=1))
+    picked, weak_n = cp.pick_for_types(tickets, {"0"}, n=4, weak_share=0.5, seed=1, type_model=LeansWeak())
+    ids = [str(t["ticket_id"]) for t in picked]
+    assert weak_n == 2 and set(ids[:2]) == {"1", "2"} and "0" not in ids and "a1" not in ids and len(ids) == 4
+    again, _ = cp.pick_for_types(tickets, {"0"}, n=4, weak_share=0.5, seed=1, type_model=LeansWeak())
+    assert [t["ticket_id"] for t in again] == [t["ticket_id"] for t in picked]
+    plain, none_weak = cp.pick_for_types(tickets, set(), n=50, weak_share=0.5, seed=1)
+    assert none_weak == 0 and len(plain) == 20
+
+
+def test_type_prompt_lists_every_type_intent_and_rule():
+    text = cp.type_prompt("round_001", ["batch_001", "batch_002"])
+    assert all(f"- {t['id']}:" in text for t in cp.TAXONOMY["types"])
+    assert all(f"- {i['id']}:" in text for i in cp.TAXONOMY["intents"])
+    assert "Validation Results reports are always outage_availability" in text
+    assert "types_round_001_batch_001.jsonl" in text
+
+
+def test_types_round_then_import(tmp_path, monkeypatch, capsys):
+    tickets = [human(i, f"slow query number {i}") for i in range(6)]
+    monkeypatch.setattr(cp, "TYPES_DIR", tmp_path / "types")
+    monkeypatch.setattr(cp, "LABEL_PATHS", (tmp_path / "none.jsonl",))
+    monkeypatch.setattr(cp, "read_jsonl", lambda path: tickets if "tickets" in str(path) else common_read(path))
+    cp.main(["types", "--tickets", "4", "--weak-share", "0", "--batch-tickets", "3"])
+    manifest = json.loads((tmp_path / "types" / "round_001" / "manifest.json").read_text(encoding="utf-8"))
+    ids = [tid for b in manifest["batches"].values() for tid in b]
+    assert list(manifest["batches"]) == ["batch_001", "batch_002"] and len(ids) == 4
+    assert (tmp_path / "types" / "round_001" / "prompt.md").exists()
+    # a second round leaves out tickets already sent in the first
+    cp.main(["types", "--tickets", "4", "--weak-share", "0"])
+    second = json.loads((tmp_path / "types" / "round_002" / "manifest.json").read_text(encoding="utf-8"))
+    assert not set(ids) & {tid for b in second["batches"].values() for tid in b}
+
+    returned = tmp_path / "types_round_001_batch_001.jsonl"
+    good = {"primary_type": "performance", "secondary_types": [], "intent": "fix_incident", "confidence": "high"}
+    lines = ["```", json.dumps({"ticket_id": ids[0], **good}), json.dumps({"ticket_id": ids[1], **good, "intent": "nope"}),
+             json.dumps({"ticket_id": "999", **good}), "```"]
+    returned.write_text("\n".join(lines), encoding="utf-8")
+    out = tmp_path / "claude_types.jsonl"
+    cp.main(["import-types", str(returned), "--out", str(out)])
+    rows = [json.loads(x) for x in out.read_text(encoding="utf-8").splitlines()]
+    assert [(r["ticket_id"], r["round"], r["batch"], r["labeler"]) for r in rows] == [(ids[0], "round_001", "batch_001", "claude")]
+    report = capsys.readouterr().out
+    assert "1 x unknown intent" in report and "1 x ticket_id not in any round" in report and "still missing" in report
+    cp.main(["import-types", str(tmp_path / "types_round_001_*.jsonl"), "--out", str(out)])  # a wildcard; adds nothing new
+    assert len(out.read_text(encoding="utf-8").splitlines()) == 1

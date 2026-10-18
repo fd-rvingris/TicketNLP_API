@@ -40,8 +40,9 @@ def parse_args(argv=None):
                    help="training sizes for the learning curve; the full training set is always added")
     p.add_argument("--max-chars", type=int, default=8000, help="description characters used per ticket")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--labels", type=Path,
-                   help="a label file (ticket_id, primary_type, intent, confidence), such as "
+    p.add_argument("--labels", type=Path, nargs="+",
+                   help="one or more label files (ticket_id, primary_type, intent, confidence), merged with later "
+                        "files winning, such as "
                         "data/claude_pack/returned/taxonomy_sample_labels.jsonl: predict its type and intent with "
                         "cross-validation over the labeled tickets in --train and --test, instead of the weak labels")
     p.add_argument("--folds", type=int, default=5, help="cross-validation folds for --labels")
@@ -61,6 +62,17 @@ def parse_args(argv=None):
 def weak_label(ticket: dict, target: str) -> str | None:
     value = (ticket.get("weak_labels") or {}).get(target)
     return str(value).strip() or None if value is not None else None
+
+
+def read_labels(paths) -> dict[str, dict]:
+    """Ticket id -> label row from one or more label files; for a ticket in several files, or several
+    times in one, the last row wins (so later DBA or Claude rounds override earlier labels)."""
+    labels = {}
+    for path in [paths] if isinstance(paths, (str, Path)) else paths:
+        for r in read_jsonl(Path(path)):
+            if r.get("ticket_id") is not None and r.get("primary_type"):
+                labels[str(r["ticket_id"])] = r
+    return labels
 
 
 def kept_classes(labels: list[str], min_count: int) -> set[str]:
@@ -268,7 +280,7 @@ def run_labeled(target: str, tickets: list[dict], labels: dict[str, dict], *, mi
 def render_labeled(results: list[dict], args, missing: int) -> str:
     lines = [
         "# Baseline on labeled tickets: TF-IDF and logistic regression", "",
-        f"Generated {now_iso()}. Labels {args.labels}; tickets from {args.train.name} and {args.test.name} "
+        f"Generated {now_iso()}. Labels {', '.join(map(str, args.labels))} ({sum(r['tickets'] for r in results[:1]):,} tickets); tickets from {args.train.name} and {args.test.name} "
         f"({missing:,} labeled tickets not found in them). {args.folds}-fold stratified cross-validation, seed "
         f"{args.seed}. Same features as the weak-label baseline; email boilerplate "
         f"{'removed (--clean)' if args.clean else 'kept for the model'}; keyword rules, which read cleaned text, "
@@ -313,9 +325,9 @@ def render_labeled(results: list[dict], args, missing: int) -> str:
 
 
 def main_labeled(args) -> None:
-    labels = {str(r["ticket_id"]): r for r in read_jsonl(args.labels) if r.get("ticket_id") is not None}
+    labels = read_labels(args.labels)
     if not labels:
-        raise SystemExit(f"Missing or empty label file: {args.labels}")
+        raise SystemExit(f"Missing or empty label files: {', '.join(map(str, args.labels))}")
     tickets = read_jsonl(args.train) + read_jsonl(args.test)
     found = {str(t["ticket_id"]) for t in tickets} & set(labels)
     missing = len(labels) - len(found)

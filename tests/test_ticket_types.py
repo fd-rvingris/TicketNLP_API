@@ -113,6 +113,38 @@ def test_uncertain_flag():
     assert r["type_source"] == "model" and isinstance(r["uncertain"], bool) and "uncertain_reason" in r
 
 
+def test_label_files_merge_with_later_files_winning_and_other_taxonomies_left_out(tmp_path):
+    import json
+    first, later = tmp_path / "sample.jsonl", tmp_path / "rounds.jsonl"
+    first.write_text("\n".join(json.dumps(r) for r in [
+        {"ticket_id": "1", "primary_type": "performance", "intent": "fix_incident"},
+        {"ticket_id": "2", "primary_type": "performance", "intent": "fix_incident"}]), encoding="utf-8")
+    later.write_text("\n".join(json.dumps(r) for r in [
+        {"ticket_id": "1", "primary_type": "access_security", "intent": "request_change",
+         "taxonomy_version": tt.TAXONOMY_VERSION},
+        {"ticket_id": "3", "primary_type": "performance", "intent": "fix_incident", "taxonomy_version": "v0"}]),
+        encoding="utf-8")
+    labels = tt.current_labels([first, later, tmp_path / "missing.jsonl"])
+    assert {k: v["primary_type"] for k, v in labels.items()} == {"1": "access_security", "2": "performance"}
+
+
+def test_load_or_train_refits_when_a_label_file_is_newer(tmp_path):
+    import json
+    import os
+    tickets, labels = labeled()
+    path = tmp_path / "labels.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in labels.values()), encoding="utf-8")
+    model = tmp_path / "m.joblib"
+    logs = []
+    first = tt.load_or_train(model, [path], tickets=tickets, log=logs.append)
+    assert first["tickets"] == 36 and model.exists()
+    assert tt.load_or_train(model, [path], tickets=tickets, log=logs.append)["created_at"] == first["created_at"]
+    later = model.stat().st_mtime + 10
+    os.utime(path, (later, later))
+    tt.load_or_train(model, [path], tickets=tickets, log=logs.append)
+    assert any("newer labels" in m for m in logs)
+
+
 def test_summary_lists_taxonomy_counts_and_rules():
     s = tt.summary(tt.train(*labeled()), {("collector", "x"): {"type": "performance", "tickets": 7}})
     types = {t["id"]: t for t in s["types"]}

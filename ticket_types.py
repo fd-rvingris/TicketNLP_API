@@ -4,8 +4,8 @@ Alerts take their type from the alert-name table in the taxonomy notes
 (data/claude_pack/returned/taxonomy_notes.md, "Alert name to v1 type"), looked up by the parsed alert
 family and name. Other tickets, and alerts the table does not know, go to the keyword rules in
 type_rules.py, which read the text with email boilerplate removed (text_clean.py), and then to TF-IDF and
-logistic regression trained on a label file (Claude's taxonomy sample labels by default), the same
-features as baseline.py. A model result whose top probability is low or close to the second is flagged
+logistic regression trained on label files (Claude's taxonomy sample labels plus later Claude Desktop
+rounds, LABEL_PATHS), the same features as baseline.py. A model result whose top probability is low or close to the second is flagged
 uncertain. Used by detector_ui.py's Classify tab.
 
 Commands: train (fit on the label file and save data/models/ticket_types.joblib). Prints counts only,
@@ -22,7 +22,7 @@ from pathlib import Path
 import joblib
 
 from alert_parser import parse_alert
-from baseline import build_model, features
+from baseline import build_model, features, read_labels
 from common import DATA_DIR, now_iso, read_jsonl
 from schema import TAXONOMY, TAXONOMY_VERSION
 from text_clean import clean_text
@@ -31,6 +31,10 @@ from type_rules import apply_rules
 RETURNED_DIR = DATA_DIR / "claude_pack" / "returned"
 NOTES_PATH = RETURNED_DIR / "taxonomy_notes.md"
 LABELS_PATH = RETURNED_DIR / "taxonomy_sample_labels.jsonl"
+# Type labels from later Claude Desktop rounds (claude_pack.py types / import-types); they override the
+# taxonomy sample for the same ticket
+CLAUDE_TYPES_PATH = DATA_DIR / "labels" / "claude_types.jsonl"
+LABEL_PATHS = (LABELS_PATH, CLAUDE_TYPES_PATH)
 MODEL_PATH = DATA_DIR / "models" / "ticket_types.joblib"
 PROMPT_PATH = Path(__file__).parent / "prompts" / "classify_v2.md"
 TICKET_FILES = [DATA_DIR / "train_tickets.jsonl", DATA_DIR / "test_tickets.jsonl"]
@@ -94,24 +98,37 @@ def train(tickets: list[dict], labels: dict[str, dict], seed: int = 0) -> dict:
             "clean": MODEL_CLEAN, "counts": {target: Counter(lab[target] for _, lab in rows) for target in TARGETS}}
 
 
-def load_or_train(model_path: Path = MODEL_PATH, labels_path: Path = LABELS_PATH,
+def current_labels(paths=LABEL_PATHS) -> dict[str, dict]:
+    """Merged labels from the label files (later files win), leaving out rows made for another
+    taxonomy version. Rows without a version (the original taxonomy sample) count as current."""
+    return {k: r for k, r in read_labels([p for p in paths if Path(p).exists()]).items()
+            if r.get("taxonomy_version", TAXONOMY_VERSION) == TAXONOMY_VERSION}
+
+
+def load_or_train(model_path: Path = MODEL_PATH, labels_path=LABEL_PATHS,
                   ticket_files=TICKET_FILES, tickets: list[dict] | None = None, log=print) -> dict | None:
-    """The saved model when it matches the current taxonomy, else one trained now and saved; None when
-    there is no label file."""
+    """The saved model when it matches the current taxonomy and no label file changed since it was
+    saved, else one trained now and saved; None when there are no labels. labels_path is one label
+    file or several (later files win)."""
+    paths = [Path(labels_path)] if isinstance(labels_path, (str, Path)) else [Path(p) for p in labels_path]
+    present = [p for p in paths if p.exists()]
     if model_path.exists():
         bundle = joblib.load(model_path)
-        if bundle.get("taxonomy_version") == TAXONOMY_VERSION and bundle.get("clean", False) == MODEL_CLEAN:
+        newer = [p.name for p in present if p.stat().st_mtime > model_path.stat().st_mtime]
+        current = bundle.get("taxonomy_version") == TAXONOMY_VERSION and bundle.get("clean", False) == MODEL_CLEAN
+        if current and not newer:
             return bundle
         log(f"Ticket type model is for taxonomy {bundle.get('taxonomy_version')} with cleaning "
-            f"{bundle.get('clean', False)}; retraining")
-    if not labels_path.exists():
-        log(f"Ticket types: no label file at {labels_path}; the Classify tab is off")
+            f"{bundle.get('clean', False)}" + (f"; newer labels in {', '.join(newer)}" if newer else "")
+            + "; retraining")
+    labels = current_labels(present)
+    if not labels:
+        log(f"Ticket types: no labels in {', '.join(map(str, paths))}; the Classify tab is off")
         return None
-    labels = {str(r["ticket_id"]): r for r in read_jsonl(labels_path) if r.get("ticket_id") is not None}
     if tickets is None:
         tickets = [t for p in ticket_files if Path(p).exists() for t in read_jsonl(p)]
     bundle = train(tickets, labels)
-    bundle["labels"] = str(labels_path)
+    bundle["labels"] = [str(p) for p in present]
     model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(bundle, model_path)
     log(f"Ticket types: trained on {bundle['tickets']:,} labeled tickets, saved to {model_path}")
@@ -220,7 +237,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
     tr = sub.add_parser("train", help="fit on the label file and save the model")
-    tr.add_argument("--labels", type=Path, default=LABELS_PATH)
+    tr.add_argument("--labels", type=Path, nargs="+", default=list(LABEL_PATHS),
+                    help="label files, later ones winning for the same ticket")
     tr.add_argument("--model-path", type=Path, default=MODEL_PATH)
     args = p.parse_args(argv)
     if args.model_path.exists():
