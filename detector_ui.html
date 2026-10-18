@@ -178,6 +178,7 @@
       <button type="button" role="tab" id="tab-tax" aria-selected="false" aria-controls="panel-tax">Taxonomy</button>
       <button type="button" role="tab" id="tab-cls" aria-selected="false" aria-controls="panel-cls">Classify ticket</button>
       <button type="button" role="tab" id="tab-flow" aria-selected="false" aria-controls="panel-flow">How types are chosen</button>
+      <button type="button" role="tab" id="tab-lflow" aria-selected="false" aria-controls="panel-lflow">How labeling works</button>
     </div>
     <div id="panel-flow" role="tabpanel" aria-labelledby="tab-flow" hidden style="display:none; gap:8px">
       <div class="how">
@@ -269,6 +270,105 @@
         <h3>Try it</h3>
         <p class="meta">Made-up examples. Each opens the Classify ticket tab with the text filled in.</p>
         <div class="row" id="flow-examples"></div>
+      </div>
+    </div>
+    <div id="panel-lflow" role="tabpanel" aria-labelledby="tab-lflow" hidden style="display:none; gap:8px">
+      <div class="how">
+        <p>Both models learn from labeled tickets. Today Claude provides almost all of the labels and DBAs have a labeling tool for servers only. The plan below adds DBA labels and corrections for ticket types, with clear rules for which label wins, so the models improve from human feedback without losing track of where each label came from.</p>
+        <div class="how-legend">
+          <span class="l-in"><i></i>Automatic sources</span>
+          <span class="l-dict"><i></i>Claude</span>
+          <span class="l-rule"><i></i>DBAs</span>
+          <span class="l-model"><i></i>Training and scoring</span>
+          <span class="l-res"><i></i>Result</span>
+        </div>
+
+        <h3>How it works today</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Label source</th><th>What it labels</th><th>How it is made</th><th class="num">Tickets</th><th>Used for</th></tr></thead>
+          <tbody>
+            <tr><td>Zendesk fields</td><td>Zendesk type and category</td><td>Set by staff when working the ticket; exported from DW2.0</td><td class="num">every ticket</td><td>The weak-label baseline only (baseline.py). Too coarse for the taxonomy.</td></tr>
+            <tr><td>Alerts and known names</td><td>Servers and instances</td><td>Read automatically from alert templates, DW2.0 server lists and the CMDB export</td><td class="num">every alert</td><td>Training the server detector</td></tr>
+            <tr><td>Claude: server spans</td><td>Which words are hosts and instances</td><td>Masked batches uploaded to a Claude chat (claude_pack.py), returned and imported</td><td class="num">200 + 200 holdout</td><td>Scoring the server detector</td></tr>
+            <tr><td>Claude: ticket types</td><td>Primary type and intent (taxonomy v1-draft)</td><td>The same chat process, with the taxonomy rules in the prompt</td><td class="num">600</td><td>The only training data for the type model</td></tr>
+            <tr><td>DBAs: server spans</td><td>Which words are hosts and instances</td><td>The Label tickets tab; 15% of tickets go to two DBAs to measure agreement</td><td class="num">tool ready, none saved yet</td><td>Scoring the server detector (server_labels.py)</td></tr>
+            <tr><td>DBAs: ticket types</td><td>–</td><td>No tool yet</td><td class="num">0</td><td>–</td></tr>
+          </tbody>
+        </table></div>
+        <ol class="pipe">
+          <li class="stage l-in"><div class="node">1</div><div class="layer">
+            <div class="layer-head"><h3>Export tickets</h3><span class="chip">DW2.0 queries</span></div>
+            <p>Training, test and evaluation exports come from DW2.0 and stay in the PoC's data folder. Secrets are masked before any text leaves this machine.</p>
+          </div></li>
+          <li class="stage l-dict"><div class="node">2</div><div class="layer">
+            <div class="layer-head"><h3>Claude labels a sample</h3><span class="chip">claude_pack.py</span></div>
+            <p>Claude labels 600 human tickets with a type, an intent and its own confidence, and marks server names in 400 tickets. Claude applies the taxonomy rules consistently, but no person has checked its type labels.</p>
+          </div></li>
+          <li class="stage l-model"><div class="node">3</div><div class="layer">
+            <div class="layer-head"><h3>Train and measure</h3><span class="chip">ticket_types.py, baseline.py</span></div>
+            <p>The type model trains on Claude's labels and is scored with cross-validation on the same 600 tickets: 74.0% type accuracy, and 56.5% where Claude itself was less than confident. Retraining is manual.</p>
+          </div></li>
+          <li class="stage l-res"><div class="node">4</div><div class="layer">
+            <div class="layer-head"><h3>Gap</h3></div>
+            <p>A DBA who sees a wrong type has no way to record it, so the model cannot learn from the people who know the tickets best, and its accuracy is measured against labels from the same source it learned from.</p>
+          </div></li>
+        </ol>
+
+        <h3>How Claude and the DBAs would work together</h3>
+        <p class="meta">Proposed. Steps marked "not built" do not exist yet.</p>
+        <ol class="pipe">
+          <li class="stage l-dict"><div class="node">1</div><div class="layer">
+            <div class="layer-head"><h3>Claude labels in bulk</h3><span class="chip">first pass</span></div>
+            <p>Claude labels new tickets at volume, as today, giving each label a confidence. This keeps the training set large and cheap to grow.</p>
+          </div></li>
+          <li class="stage l-model"><div class="node">2</div><div class="layer">
+            <div class="layer-head"><h3>Choose what DBAs label</h3><span class="chip new">not built</span></div>
+            <ul>
+              <li>Tickets the classifier flagged uncertain, which are right only about 27% of the time.</li>
+              <li>Weak types with few examples: database_refresh, engine_errors, data_request_query, configuration_change, install_migrate_upgrade.</li>
+              <li>Tickets where Claude was less than confident, or where Claude and the model disagree.</li>
+              <li>A small random sample, so the audit of Claude's labels is not biased toward hard tickets.</li>
+            </ul>
+          </div></li>
+          <li class="stage l-rule"><div class="node">3</div><div class="layer">
+            <div class="layer-head"><h3>DBAs label and correct</h3><span class="chip new">not built</span></div>
+            <ul>
+              <li><b>Label tickets tab:</b> a type and intent mode beside the existing server mode, with Claude's and the model's answers hidden until the DBA has chosen.</li>
+              <li><b>Classify ticket tab:</b> a "wrong type?" button that records the correct type.</li>
+              <li><b>Keystone:</b> when a DBA changes a ticket's type there, Keystone sends the correction to the API's feedback endpoint.</li>
+            </ul>
+            <p>Every label is a new row with the ticket, the type and intent, the labeler, the time, the taxonomy version and what the model had said. Rows are never overwritten, so any training set can be rebuilt.</p>
+          </div></li>
+          <li class="stage l-model"><div class="node">4</div><div class="layer">
+            <div class="layer-head"><h3>Decide which label wins</h3><span class="chip new">not built</span></div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Situation</th><th>Label used for training</th></tr></thead>
+              <tbody>
+                <tr><td>Two DBAs agree, or a reviewer settled a disagreement</td><td>The DBA label</td></tr>
+                <tr><td>One DBA labeled the ticket</td><td>The DBA label, over Claude's</td></tr>
+                <tr><td>Two DBAs disagree</td><td>None until reviewed; the ticket goes to a review queue</td></tr>
+                <tr><td>Only Claude labeled the ticket</td><td>Claude's label</td></tr>
+              </tbody>
+            </table></div>
+            <p>Each Claude and DBA disagreement is also counted, which measures how far Claude's labels can be trusted, type by type.</p>
+          </div></li>
+          <li class="stage l-model"><div class="node">5</div><div class="layer">
+            <div class="layer-head"><h3>Keep an honest test set</h3><span class="chip new">not built</span></div>
+            <p>A fixed set of DBA-labeled tickets is never used for training. Every new model is scored on it, so accuracy is measured against people rather than against the labeler the model learned from.</p>
+          </div></li>
+          <li class="stage l-model"><div class="node">6</div><div class="layer">
+            <div class="layer-head"><h3>Retrain on a schedule</h3><span class="chip new">not built</span></div>
+            <p>Each quarter, a job trains on Claude's and the DBAs' labels combined, scores the new model on the test set, checks every keyword rule is still at least 90% precise, and publishes a new model version only if it is not worse. The previous version stays available for rollback.</p>
+          </div></li>
+          <li class="stage l-dict"><div class="node">7</div><div class="layer">
+            <div class="layer-head"><h3>Improve the taxonomy and Claude's instructions</h3></div>
+            <p>Patterns in DBA corrections show where a type definition or tie-break is unclear. Those become new rules in the taxonomy notes and in Claude's labeling prompt, so Claude's next batch is labeled better. If DBAs add, split or merge types, that is a new taxonomy version: old labels are mapped where the change is clear and relabeled where it is not.</p>
+          </div></li>
+          <li class="stage l-res"><div class="node">8</div><div class="layer">
+            <div class="layer-head"><h3>Result</h3></div>
+            <p>Claude supplies volume, DBAs supply accuracy where it matters most, and every model version can be traced back to the labels and taxonomy it was trained on.</p>
+          </div></li>
+        </ol>
       </div>
     </div>
     <div id="panel-tax" role="tabpanel" aria-labelledby="tab-tax" hidden style="display:none; gap:8px">
@@ -1175,13 +1275,13 @@
   // --- Setup ---------------------------------------------------------------------
 
   function selectTab(which) {
-    for (const name of ["text", "zendesk", "label", "types", "how", "tax", "cls", "flow"]) {
+    for (const name of ["text", "zendesk", "label", "types", "how", "tax", "cls", "flow", "lflow"]) {
       const on = name === which;
       $(`tab-${name}`).setAttribute("aria-selected", String(on));
       $(`panel-${name}`).hidden = !on;
       $(`panel-${name}`).style.display = on ? "grid" : "none";
     }
-    const labeling = which === "label", ownView = ["how", "tax", "cls", "flow"].includes(which);
+    const labeling = which === "label", ownView = ["how", "tax", "cls", "flow", "lflow"].includes(which);
     $("th-row").hidden = labeling || ownView;
     $("results").hidden = labeling || ownView;
     $("label-view").hidden = !labeling || !LABEL.ticket;
@@ -1204,6 +1304,8 @@
     $("tab-cls").addEventListener("click", () => { selectTab("cls"); loadTaxonomy(); });
     $("tab-flow").addEventListener("click", () => { selectTab("flow"); renderFlow(); });
     if (location.hash === "#how-types") { selectTab("flow"); renderFlow(); }
+    $("tab-lflow").addEventListener("click", () => selectTab("lflow"));
+    if (location.hash === "#labeling") selectTab("lflow");
     $("cls-run").addEventListener("click", classifyTicket);
     $("cls-text").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) classifyTicket(); });
     if (location.hash === "#taxonomy") { selectTab("tax"); loadTaxonomy(); }
