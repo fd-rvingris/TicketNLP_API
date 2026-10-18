@@ -81,3 +81,15 @@ def test_jsonl_round_trip_keeps_staff(tmp_path):
     ticket = make_ticket(9, "s", "d", staff={"assignee_key": 42, "status_assignee_keys": ["42", "17"]})
     [t] = from_json(write(tmp_path, "t.jsonl", json.dumps(ticket) + "\n"), "export:test")
     assert t["staff"]["assignee_key"] == "42" and t["staff"]["status_assignee_keys"] == ["42", "17"]
+
+
+def test_exclude_drops_tickets_already_pulled(tmp_path):
+    import pytest
+    from common import make_ticket, write_jsonl
+    from load_export import without_tickets_in
+    old = tmp_path / "train.jsonl"
+    write_jsonl(old, [make_ticket("1", "a", "b"), make_ticket("3", "a", "b")])
+    kept, dropped = without_tickets_in([make_ticket(str(i), "s", "d") for i in range(1, 5)], [old])
+    assert [t["ticket_id"] for t in kept] == ["2", "4"] and dropped == 2
+    with pytest.raises(SystemExit):
+        without_tickets_in([], [tmp_path / "missing.jsonl"])

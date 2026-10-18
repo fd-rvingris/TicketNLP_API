@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 
-from common import DW_FIELDS, STAFF_FIELDS, TICKETS_PATH, make_ticket, merge_tickets
+from common import DW_FIELDS, STAFF_FIELDS, TICKETS_PATH, make_ticket, merge_tickets, read_jsonl
 from fetch_tickets import WEAK_LABEL_TITLE
 
 # Accepted CSV headers per field, compared case-insensitively.
@@ -31,11 +31,14 @@ def clean(value: str | None) -> str:
     return "" if value == "NULL" else value
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("path", type=Path, help="export file (.csv, .json, .jsonl, or .ndjson)")
     p.add_argument("--output", type=Path, default=TICKETS_PATH, help="default data/tickets.jsonl")
-    return p.parse_args()
+    p.add_argument("--exclude", type=Path, nargs="*", default=[],
+                   help="ticket files whose tickets are left out, such as the training and test files, so a new "
+                        "export never repeats a ticket already pulled")
+    return p.parse_args(argv)
 
 
 def from_csv(path: Path, source: str) -> list[dict]:
@@ -84,8 +87,20 @@ def from_json(path: Path, source: str) -> list[dict]:
     ]
 
 
-def main():
-    args = parse_args()
+def without_tickets_in(tickets: list[dict], paths) -> tuple[list[dict], int]:
+    """The tickets minus those whose ticket_id is in any of the given ticket files (missing files are
+    refused, so a typo cannot silently let repeats through), and how many were dropped."""
+    seen = set()
+    for path in paths:
+        if not Path(path).exists():
+            raise SystemExit(f"File to exclude not found: {path}")
+        seen |= {str(t.get("ticket_id")) for t in read_jsonl(Path(path))}
+    kept = [t for t in tickets if str(t["ticket_id"]) not in seen]
+    return kept, len(tickets) - len(kept)
+
+
+def main(argv=None):
+    args = parse_args(argv)
     if not args.path.exists():
         raise SystemExit(f"File not found: {args.path}")
     source = f"export:{args.path.name}"
@@ -93,6 +108,9 @@ def main():
         tickets = from_csv(args.path, source)
     else:
         tickets = from_json(args.path, source)
+    if args.exclude:
+        tickets, dropped = without_tickets_in(tickets, args.exclude)
+        print(f"Left out {dropped} tickets already in {', '.join(str(p) for p in args.exclude)}")
     added, updated = merge_tickets(tickets, args.output)
     print(f"Loaded {len(tickets)} tickets ({added} new, {updated} updated) into {args.output}")
 

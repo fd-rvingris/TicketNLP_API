@@ -75,7 +75,11 @@ with different settings is refused.
 tickets per query) for `--since`, and adds or replaces tickets in
 data/tickets.jsonl by ticket_id. `load_export.py` accepts .csv (common Zendesk
 export column names), .json and .jsonl/.ndjson files. CSV cells containing the
-text NULL (as SSMS writes SQL NULL) are treated as empty. Optional is_alert
+text NULL (as SSMS writes SQL NULL) are treated as empty. `--exclude FILE ...`
+leaves out tickets already in other ticket files; docs/dw-export-eval.sql pulls
+a fresh evaluation sample (tickets since the training window, minus the test
+export) and loads it with `--exclude data\train_tickets.jsonl
+data\test_tickets.jsonl`. Optional is_alert
 (1/0) and dw_servers (semicolon-separated) columns from the DW2.0 export are
 kept on each ticket for review and reporting; they are never sent to the model.
 The same holds for the optional staff columns (assignee_key,
