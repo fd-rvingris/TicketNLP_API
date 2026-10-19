@@ -477,7 +477,7 @@
   }
 
   function parseTickets(name, text) {
-    if (/\.csv$/i.test(name)) throw new Error("This is a CSV export. Run load_export.py on it first, then open the .jsonl file it writes.");
+    if (/\.csv$/i.test(name)) throw new Error("This is a CSV export. Run python -m tools.load_export on it first, then open the .jsonl file it writes.");
     let items, skipped = 0;
     if (/\.json$/i.test(name)) {
       const data = JSON.parse(text);

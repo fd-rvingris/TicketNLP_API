@@ -1334,7 +1334,7 @@
     resetThresholds();
     $("zd-note").textContent = INFO.zendesk
       ? `Reads the ticket from ${INFO.zendesk}.zendesk.com with GET requests only, and analyzes its subject and description (the first comment). The ticket's organization selects the client.`
-      : "Zendesk is not configured. Set ZENDESK_SUBDOMAIN, ZENDESK_EMAIL and ZENDESK_API_TOKEN in .env and restart detector_ui.py.";
+      : "Zendesk is not configured. Set ZENDESK_SUBDOMAIN, ZENDESK_EMAIL and ZENDESK_API_TOKEN in .env and restart python -m tools.detector_ui.";
     $("fetch").disabled = !INFO.zendesk;
     if (INFO.labeling) {
       $("tab-label").hidden = false;

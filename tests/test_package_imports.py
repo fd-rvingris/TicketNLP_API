@@ -61,3 +61,13 @@ def test_type_classification_runs_without_the_tools():
     out = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "(1, 2)"
+
+
+def test_messages_name_commands_not_old_script_files():
+    """Error messages and page text that tell the user what to run must give python -m tools.<name>."""
+    import re
+    stale = re.compile(r"\b(?:[Rr]un|then|restart)\s+(?:python\s+)?[a-z_]+\.py\b")
+    hits = [f"{p.relative_to(REPO_ROOT)}:{n}" for d in ("tools", "ticket_analysis")
+            for p in sorted((REPO_ROOT / d).glob("*.*")) if p.suffix in (".py", ".html")
+            for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1) if stale.search(line)]
+    assert not hits, hits

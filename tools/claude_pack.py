@@ -229,7 +229,7 @@ def cmd_types(args) -> None:
     print(f"{round_name}: {len(records):,} human tickets ({weak_n:,} leaning to weak types, the rest random) in "
           f"{len(groups)} batches under {out_dir}; {sum(r['truncated'] for r in records):,} descriptions cut at "
           f"{args.max_chars:,} characters after cleaning")
-    print(f"Follow {out_dir / 'prompt.md'}: one chat per batch, then claude_pack.py import-types")
+    print(f"Follow {out_dir / 'prompt.md'}: one chat per batch, then python -m tools.claude_pack import-types")
 
 
 def check_type_row(row: dict, types: set[str], intents: set[str]) -> str | None:

@@ -75,7 +75,7 @@ def main():
         return
     tickets = read_jsonl(args.tickets)
     if not tickets:
-        raise SystemExit(f"No tickets in {args.tickets}. Run fetch_tickets.py or load_export.py first.")
+        raise SystemExit(f"No tickets in {args.tickets}. Run python -m tools.fetch_tickets or python -m tools.load_export first.")
     run_name, rows_by_id = None, {}
     if args.run:
         run_dir = resolve_run(args.run)

@@ -93,7 +93,7 @@ def main():
     load_env()
     tickets = read_jsonl(args.tickets)
     if not tickets:
-        raise SystemExit(f"No tickets in {args.tickets}. Run fetch_tickets.py or load_export.py first.")
+        raise SystemExit(f"No tickets in {args.tickets}. Run python -m tools.fetch_tickets or python -m tools.load_export first.")
     selected = tickets[: args.limit] if args.limit else tickets
     prompt = load_prompt(args.prompt_version)
     cmdb = load_cmdb()

@@ -49,3 +49,28 @@ def test_convert_refuses_a_second_run(tmp_path, monkeypatch):
     convert(path)
     with pytest.raises(SystemExit, match="already converted"):
         convert(path)
+
+
+def test_convert_keeps_a_trained_model_and_its_directory(tmp_path, monkeypatch):
+    """A fitted model holds _Linear and a LocalServerDirectory too; all three classes must be remapped."""
+    import tools.server_detector as sdt
+    from tests.test_server_detector import human, synthetic_tickets
+    tickets = synthetic_tickets(n=150)
+    directory = sd.LocalServerDirectory.from_sources(tickets, None)
+    model, _ = sdt.fit_config(tickets, directory, kind="logreg", alert_context="strip_labels", instance_model=False,
+                              seed=0, max_chars=5000, neg_ratio=10)
+    probe = human(999, "Please restart FAKESQL01\REPORTS and check the FINANCE instance.", subject="Made up")
+    expected = sd.detect_servers(probe, directory, model, host_threshold=0.5, instance_threshold=0.3)
+    path = tmp_path / "server_detector.joblib"
+    with monkeypatch.context() as m:
+        for cls in (sd.ServerModel, sd._Linear, sd.LocalServerDirectory):
+            m.setattr(cls, "__module__", OLD_MODULE)
+        m.setitem(sys.modules, OLD_MODULE, sd)
+        joblib.dump({"model": model, "directory": directory}, path)
+    assert load_elsewhere(path).returncode != 0
+    convert(path)
+    bundle = sd.load_model(path)
+    assert {type(bundle["model"]).__module__, type(bundle["model"].main).__module__,
+            type(bundle["directory"]).__module__} == {"ticket_analysis.server_detector"}
+    assert sd.detect_servers(probe, bundle["directory"], bundle["model"], host_threshold=0.5,
+                             instance_threshold=0.3) == expected
