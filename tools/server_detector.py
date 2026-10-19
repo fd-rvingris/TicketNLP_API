@@ -20,14 +20,14 @@ import joblib
 import numpy as np
 from sklearn.metrics import average_precision_score, precision_recall_curve
 
-from common import REPORTS_DIR, fmt_pct, md_table
 from ticket_analysis.jsonl import now_iso, read_jsonl, write_jsonl
 from ticket_analysis.paths import DATA_DIR, INSTANCES_PATH
 from ticket_analysis.server_detector import (BUILTIN_STOP, DEFAULT_INSTANCE, DEFAULT_MAX_CHARS, DEFAULT_THRESHOLD,
-                                             MODEL_PATH, RULE_SCORE, Knowledge, LocalServerDirectory,
-                                             ServerDirectory, ServerModel, add_features, build_stop_words,
-                                             compress, detect_servers, is_alert_ticket, load_model,
-                                             normalize_reference, ticket_candidates, ticket_names, ticket_text)
+                                             MODEL_PATH, RULE_SCORE, Knowledge, LocalServerDirectory, ServerDirectory,
+                                             ServerModel, add_features, build_stop_words, compress, detect_servers,
+                                             is_alert_ticket, load_model, normalize_reference, ticket_candidates,
+                                             ticket_names, ticket_text)
+from tools.common import REPORTS_DIR, fmt_pct, md_table
 
 # Claude-labeled training tickets kept out of training and never tuned on: the unseen-name test set.
 HOLDOUT_LABELS_PATH = DATA_DIR / "labels" / "claude_spans_holdout.jsonl"

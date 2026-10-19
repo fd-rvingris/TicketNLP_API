@@ -1,6 +1,6 @@
 """Hand labels for the server detector, from many labelers: which spans of a ticket's text are hosts,
 HOST\\INSTANCE names or bare instance names. detector_ui.py's Label tab collects them;
-`python server_labels.py evaluate` scores the saved model against them and reports how often two
+`python -m tools.server_labels evaluate` scores the saved model against them and reports how often two
 labelers agree on the tickets both labeled.
 
 Labels are appended to data/labels/server_spans.jsonl, one row per save; the latest row per ticket
@@ -22,8 +22,11 @@ from pathlib import Path
 
 
 import ticket_analysis.server_detector as sd
-from common import (_SECRET_PATTERNS, DATA_DIR, REPORTS_DIR, append_jsonl, fmt_pct, md_table, now_iso,
-                    parse_server_name, read_jsonl)
+from ticket_analysis.jsonl import append_jsonl, now_iso, read_jsonl
+from ticket_analysis.masking import _SECRET_PATTERNS
+from ticket_analysis.names import parse_server_name
+from ticket_analysis.paths import DATA_DIR
+from tools.common import REPORTS_DIR, fmt_pct, md_table
 
 LABELS_PATH = DATA_DIR / "labels" / "server_spans.jsonl"
 KINDS = ("host", "host_instance", "bare_instance")
@@ -390,7 +393,7 @@ def main(argv=None):
     args = parse_args(argv)
     labels = load_labels(args.labels)
     if not labels:
-        raise SystemExit(f"No labels in {args.labels}. Label tickets in the detector UI first: python detector_ui.py")
+        raise SystemExit(f"No labels in {args.labels}. Label tickets in the detector UI first: python -m tools.detector_ui")
     if not args.model_path.exists():
         raise SystemExit(f"No model at {args.model_path}. Run: python -m tools.server_detector train")
     tickets = {str(t["ticket_id"]): t for t in read_jsonl(args.tickets)}
@@ -411,5 +414,5 @@ def main(argv=None):
 
 if __name__ == "__main__":
     # Run through the imported module, as server_detector.py does, so pickled classes resolve.
-    import server_labels
+    from tools import server_labels
     server_labels.main()

@@ -1,4 +1,4 @@
-from common import mask_secrets, prepare_ticket_text
+from ticket_analysis.masking import mask_secrets, prepare_ticket_text
 
 
 def test_connection_string_password_masked_and_other_keys_kept():

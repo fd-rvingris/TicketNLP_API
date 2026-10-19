@@ -6,7 +6,7 @@ import pytest
 
 import ticket_analysis.server_detector as sd
 import tools.server_detector as sdt
-from common import make_ticket
+from ticket_analysis.tickets import make_ticket
 
 
 def human(tid, text, org="100", name="Acme", dw=None, subject="Help"):
@@ -539,7 +539,7 @@ def test_thresholds_are_chosen_without_rule_matches():
 
 
 def test_without_labeled_drops_holdout_tickets(tmp_path):
-    from common import write_jsonl
+    from ticket_analysis.jsonl import write_jsonl
     tickets = [human(str(i), "on server fakesql01") for i in range(4)]
     labels = tmp_path / "holdout.jsonl"
     write_jsonl(labels, [{"ticket_id": "1", "labeler": "claude"}, {"ticket_id": "3", "labeler": "claude"}])

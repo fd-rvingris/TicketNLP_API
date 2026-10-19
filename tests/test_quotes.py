@@ -1,5 +1,5 @@
-from schema import Mention
-from common import split_by_evidence
+from ticket_analysis.taxonomy import Mention
+from tools.common import split_by_evidence
 
 TICKET = "Backups failing\nThe nightly full backup on SQLPROD01\\REPORTING\n  failed again.   Database: SalesDB"
 

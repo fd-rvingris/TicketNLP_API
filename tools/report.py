@@ -7,10 +7,10 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from common import (LABELS_PATH, PRICES_PER_MTOK, REPORTS_DIR, TICKETS_PATH, compute_metrics, fmt_pct,
-                    label_metrics, latest_rows, md_table, now_iso, read_jsonl, read_labels, resolve_run,
-                    summary_rows, write_labels)
-from schema import TAXONOMY
+from ticket_analysis.jsonl import now_iso, read_jsonl
+from ticket_analysis.taxonomy import TAXONOMY
+from tools.common import (LABELS_PATH, PRICES_PER_MTOK, REPORTS_DIR, TICKETS_PATH, compute_metrics, fmt_pct,
+                          label_metrics, latest_rows, md_table, read_labels, resolve_run, summary_rows, write_labels)
 
 TYPE_IDS = [t["id"] for t in TAXONOMY["types"]]
 INTENT_IDS = [i["id"] for i in TAXONOMY["intents"]]

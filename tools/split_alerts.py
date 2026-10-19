@@ -10,8 +10,9 @@ import argparse
 import csv
 from pathlib import Path
 
-from common import _flag, read_jsonl, write_jsonl
-from load_export import COLUMN_ALIASES, clean
+from ticket_analysis.jsonl import read_jsonl, write_jsonl
+from ticket_analysis.tickets import _flag
+from tools.load_export import COLUMN_ALIASES, clean
 
 SEGMENTS = {True: "alerts", False: "human"}
 

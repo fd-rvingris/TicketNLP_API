@@ -1,5 +1,5 @@
-from common import ZendeskClient
-from fetch_tickets import normalize
+from tools.common import ZendeskClient
+from tools.fetch_tickets import normalize
 
 
 class FakeResponse:

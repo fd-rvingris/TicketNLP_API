@@ -3,7 +3,8 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from schema import OUTPUT_SCHEMA, TAXONOMY, TAXONOMY_PATH, Intent, TicketClassification, TicketType
+from ticket_analysis.taxonomy import TAXONOMY, TAXONOMY_PATH, Intent, TicketClassification, TicketType
+from tools.schema import OUTPUT_SCHEMA
 
 
 def valid_output(**overrides) -> dict:

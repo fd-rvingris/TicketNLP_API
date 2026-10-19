@@ -1,5 +1,5 @@
 from ticket_analysis.alert_parser import alert_family, parse_alert
-from common import make_ticket
+from ticket_analysis.tickets import make_ticket
 
 COLLECTOR = """AlertId 123456
 Alert FD - SQL Agent Job Failure

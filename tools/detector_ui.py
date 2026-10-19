@@ -26,11 +26,14 @@ from pathlib import Path
 import requests
 
 import ticket_analysis.server_detector as sd
-import server_labels as sl
 import ticket_analysis.ticket_types as tt
+import tools.server_labels as sl
 import tools.ticket_types as ttt
 from ticket_analysis.alert_parser import alert_spans, parse_alert
-from common import DATA_DIR, ZendeskClient, load_env, make_ticket, now_iso, read_jsonl
+from ticket_analysis.jsonl import now_iso, read_jsonl
+from ticket_analysis.paths import DATA_DIR
+from ticket_analysis.tickets import make_ticket
+from tools.common import ZendeskClient, load_env
 
 PAGE_PATH = Path(__file__).parent / "detector_ui.html"
 DEFAULT_PORT = 8765

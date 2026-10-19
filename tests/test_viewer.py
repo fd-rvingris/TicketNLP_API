@@ -5,8 +5,9 @@ import subprocess
 
 import pytest
 
-from common import _SECRET_PATTERNS, make_ticket, prepare_ticket_text
-from view_tickets import TEMPLATE_PATH, build_html, js_rule, mask_rules, viewer_ticket
+from ticket_analysis.masking import _SECRET_PATTERNS, prepare_ticket_text
+from ticket_analysis.tickets import make_ticket
+from tools.view_tickets import TEMPLATE_PATH, build_html, js_rule, mask_rules, viewer_ticket
 
 
 def embedded_data(html: str) -> dict:

@@ -3,10 +3,11 @@
 import numpy as np
 import pytest
 
-import detector_ui as ui
 import ticket_analysis.server_detector as sd
-import server_labels as sl
-from common import make_ticket, prepare_ticket_text
+import tools.detector_ui as ui
+import tools.server_labels as sl
+from ticket_analysis.masking import prepare_ticket_text
+from ticket_analysis.tickets import make_ticket
 
 
 def human(tid, text, subject="Help", org="100", name="Acme Corp", dw=None):

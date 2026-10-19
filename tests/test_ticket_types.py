@@ -2,8 +2,8 @@
 
 import ticket_analysis.ticket_types as tt
 import tools.ticket_types as ttt
-from common import make_ticket
 from tests.test_alert_parser import COLLECTOR
+from ticket_analysis.tickets import make_ticket
 
 NOTES = """# Notes
 

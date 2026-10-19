@@ -5,7 +5,8 @@ import re
 from datetime import date
 from pathlib import Path
 
-from common import TICKETS_PATH, ZendeskClient, load_env, make_ticket, merge_tickets
+from ticket_analysis.tickets import make_ticket
+from tools.common import TICKETS_PATH, ZendeskClient, load_env, merge_tickets
 
 # Custom ticket fields whose title looks like a type or category are kept as weak labels.
 WEAK_LABEL_TITLE = re.compile(r"(?i)\b(type|category|categories|sub-?category|issue|reason|intent)\b")

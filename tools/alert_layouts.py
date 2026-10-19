@@ -11,7 +11,7 @@ Ticket text is never printed. Examples are masked: a word is kept only when it i
 (a parser label, or a word seen in the alerts of many organizations that is not part of any
 organization or server name); every other word becomes its compressed shape (SQL01 becomes L3 D2).
 
-    python alert_layouts.py inventory [--tickets data/train_tickets.jsonl data/test_tickets.jsonl]
+    python -m tools.alert_layouts inventory [--tickets data/train_tickets.jsonl data/test_tickets.jsonl]
 """
 
 from __future__ import annotations
@@ -23,8 +23,10 @@ from datetime import datetime
 from pathlib import Path
 
 from ticket_analysis.alert_parser import COLLECTOR_LABELS, FIRING_LABELS, parse_alert
-from common import DATA_DIR, REPORTS_DIR, md_table, read_jsonl
+from ticket_analysis.jsonl import read_jsonl
+from ticket_analysis.paths import DATA_DIR
 from ticket_analysis.server_detector import BUILTIN_STOP, compress, is_alert_ticket, ticket_names
+from tools.common import REPORTS_DIR, md_table
 
 LAYOUTS_DIR = DATA_DIR / "alert_layouts"
 DEFAULT_TICKETS = [DATA_DIR / "train_tickets.jsonl", DATA_DIR / "test_tickets.jsonl"]

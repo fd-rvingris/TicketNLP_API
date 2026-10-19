@@ -257,7 +257,7 @@
         <ol id="flow-rules" class="help" style="margin:0; padding-left:20px; display:grid; gap:3px"></ol>
 
         <h3>How accurate is it?</h3>
-        <p class="meta">Measured 2026-10-17 with 5-fold cross-validation on the 600 labeled human tickets (python baseline.py --labels ...), keyword rules first and the model for the rest. The rules are fixed patterns, so no ticket is scored by a model that saw it. Alerts are not in this measure; their accuracy depends on the alert-name table.</p>
+        <p class="meta">Measured 2026-10-17 with 5-fold cross-validation on the 600 labeled human tickets (python -m tools.baseline --labels ...), keyword rules first and the model for the rest. The rules are fixed patterns, so no ticket is scored by a model that saw it. Alerts are not in this measure; their accuracy depends on the alert-name table.</p>
         <div class="table-wrap"><table>
           <thead><tr><th></th><th class="num">Accuracy</th><th class="num">Macro F1</th><th class="num">Model alone, before the rules</th><th class="num">Always guessing the most common</th></tr></thead>
           <tbody>

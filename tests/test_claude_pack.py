@@ -2,10 +2,10 @@
 
 import json
 
-import claude_pack as cp
-from common import read_jsonl as common_read
-import server_labels as sl
-from common import make_ticket
+import tools.claude_pack as cp
+import tools.server_labels as sl
+from ticket_analysis.jsonl import read_jsonl as common_read
+from ticket_analysis.tickets import make_ticket
 
 
 def human(tid, text, subject="Help"):

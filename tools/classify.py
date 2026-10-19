@@ -8,11 +8,14 @@ from pathlib import Path
 
 import anthropic
 
-from common import (DATA_DIR, DEFAULT_EFFORT, DEFAULT_MAX_TOKENS, DEFAULT_MODEL, EFFORT_LEVELS, RUNS_DIR,
-                    TICKETS_PATH, FatalAPIError, append_jsonl, build_request, classify_ticket,
-                    client_server_hints, fmt_usd, load_cmdb, load_env, load_prompt, make_client, now_iso,
-                    prepare_ticket_text, read_jsonl, render_user_message)
-from schema import TAXONOMY_VERSION
+from ticket_analysis.jsonl import append_jsonl, now_iso, read_jsonl
+from ticket_analysis.masking import prepare_ticket_text
+from ticket_analysis.names import load_cmdb
+from ticket_analysis.paths import DATA_DIR
+from ticket_analysis.taxonomy import TAXONOMY_VERSION
+from tools.common import (DEFAULT_EFFORT, DEFAULT_MAX_TOKENS, DEFAULT_MODEL, EFFORT_LEVELS, RUNS_DIR, TICKETS_PATH,
+                          FatalAPIError, build_request, classify_ticket, client_server_hints, fmt_usd, load_env,
+                          load_prompt, make_client, render_user_message)
 
 
 def parse_args():
@@ -141,7 +144,7 @@ def main():
         raise SystemExit("Interrupted. Completed rows are saved; rerun the same command to resume.")
     pool.shutdown()
     print(f"Done: {ok} classified, {failed} failed, estimated cost {fmt_usd(cost)}. "
-          f"Results in {results_path}. Next: python report.py --run {run_name}")
+          f"Results in {results_path}. Next: python -m tools.report --run {run_name}")
 
 
 if __name__ == "__main__":

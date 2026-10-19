@@ -1,8 +1,8 @@
 import pytest
 
-from baseline import (OTHER, kept_classes, merge_label, redundancy, run_target, score, segment_masks, subsample,
-                      top_confusions, weak_label)
-from common import make_ticket
+from ticket_analysis.tickets import make_ticket
+from tools.baseline import (OTHER, kept_classes, merge_label, redundancy, run_target, score, segment_masks, subsample,
+                            top_confusions, weak_label)
 
 BACKUP = "backup job failed on the nightly full backup, restore test needed"
 DISK = "disk space low on the data drive, volume capacity alert"
@@ -99,7 +99,7 @@ def test_run_target_learns_separable_classes():
 
 
 def test_run_labeled_cross_validates_label_file_classes():
-    from baseline import run_labeled
+    from tools.baseline import run_labeled
     tickets = synthetic(15)
     texts = {"b": ("backup_restore", "fix_incident"), "d": ("capacity_storage", "fix_incident"),
              "l": ("access_security", "request_change")}

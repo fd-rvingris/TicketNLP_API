@@ -15,13 +15,11 @@ from pathlib import Path
 
 import joblib
 
-from baseline import build_model, read_labels
-from common import read_jsonl
-from ticket_analysis.jsonl import now_iso
+from ticket_analysis.jsonl import now_iso, read_jsonl
 from ticket_analysis.paths import DATA_DIR, REPO_ROOT
 from ticket_analysis.taxonomy import TAXONOMY, TAXONOMY_VERSION
-from ticket_analysis.ticket_types import (MAX_CHARS, MODEL_CLEAN, MODEL_PATH, RETURNED_DIR, features,
-                                          load_alert_map)
+from ticket_analysis.ticket_types import MAX_CHARS, MODEL_CLEAN, MODEL_PATH, RETURNED_DIR, features, load_alert_map
+from tools.baseline import build_model, read_labels
 
 LABELS_PATH = RETURNED_DIR / "taxonomy_sample_labels.jsonl"
 # Type labels from later Claude Desktop rounds (claude_pack.py types / import-types); they override the

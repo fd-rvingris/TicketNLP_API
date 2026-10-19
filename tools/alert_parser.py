@@ -10,10 +10,10 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from common import md_table
 from ticket_analysis.alert_parser import LAYOUTS, parse_alert
 from ticket_analysis.jsonl import read_jsonl, write_jsonl
 from ticket_analysis.server_detector import ticket_names
+from tools.common import md_table
 
 
 # --- Ticket files ----------------------------------------------------------------------------

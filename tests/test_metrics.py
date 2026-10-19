@@ -1,7 +1,7 @@
 import pytest
 
-from common import compute_metrics, label_metrics, latest_rows, percentile, read_labels
-from report import update_labels
+from tools.common import compute_metrics, label_metrics, latest_rows, percentile, read_labels
+from tools.report import update_labels
 
 
 def ok_row(tid, ptype="backup_restore", intent="fix_incident", matches=(), cmdb=1, dropped=0, returned=None,

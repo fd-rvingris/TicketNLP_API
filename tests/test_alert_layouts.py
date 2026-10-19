@@ -3,10 +3,10 @@ the inventory), with every field value and every span checked."""
 
 import pytest
 
-from ticket_analysis.alert_parser import LAYOUTS, SERVER_FIELDS, alert_spans, match_layout, parse_alert, span_value
-from tools.alert_parser import coverage
-from ticket_analysis.server_detector import ticket_names
 from tests.test_alert_parser import BACKUP, TABLE
+from ticket_analysis.alert_parser import LAYOUTS, SERVER_FIELDS, alert_spans, match_layout, parse_alert, span_value
+from ticket_analysis.server_detector import ticket_names
+from tools.alert_parser import coverage
 
 
 def check_spans(subject: str, text: str) -> list[dict]:

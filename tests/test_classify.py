@@ -5,11 +5,12 @@ import anthropic
 import httpx2
 import pytest
 
-from classify import default_run_name
-from common import (Cmdb, FatalAPIError, build_request, classify_ticket, load_prompt, new_row, parse_server_name,
-                    Instance, process_response, render_user_message)
 from conftest import fake_response
-from schema import TAXONOMY
+from ticket_analysis.names import Cmdb, Instance, parse_server_name
+from ticket_analysis.taxonomy import TAXONOMY
+from tools.classify import default_run_name
+from tools.common import (FatalAPIError, build_request, classify_ticket, load_prompt, new_row, process_response,
+                          render_user_message)
 
 TICKET = {"ticket_id": "1001", "subject": "Backup failed on SQLPROD01",
           "description": "The full backup on SQLPROD01\\REPORTING failed. Password=hunter2 is the sa login.",

@@ -1,6 +1,6 @@
 import pytest
 
-from common import Cmdb, Instance, ParsedName, load_cmdb, match_mention, parse_server_name
+from ticket_analysis.names import Cmdb, Instance, ParsedName, load_cmdb, match_mention, parse_server_name
 
 
 def inst(name: str) -> Instance:

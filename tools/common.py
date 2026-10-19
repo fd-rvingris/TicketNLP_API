@@ -1,5 +1,4 @@
-"""Shared code for the ticket classifier PoC: storage, secret masking, prompt
-rendering, CMDB matching, the model call, the read-only Zendesk client, and the
+"""Shared code for the tools: prompt rendering, the model call, the read-only Zendesk client, and the
 metrics used by report.py and compare.py."""
 
 from __future__ import annotations
@@ -19,19 +18,18 @@ import requests
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
-from schema import OUTPUT_SCHEMA, TAXONOMY, TAXONOMY_VERSION, TicketClassification
-from ticket_analysis.jsonl import append_jsonl, now_iso, read_jsonl, write_jsonl  # noqa: F401
-from ticket_analysis.masking import (_PROMPT_TAGS, _SECRET_PATTERNS, PROMPT_TAG_REPLACEMENT, REDACTED,  # noqa: F401
-                                     mask_secrets, prepare_ticket_text)
-from ticket_analysis.names import Cmdb, Instance, ParsedName, load_cmdb, match_mention, parse_server_name  # noqa: F401
-from ticket_analysis.paths import DATA_DIR, INSTANCES_PATH, REPO_ROOT as ROOT  # noqa: F401
-from ticket_analysis.tickets import DW_FIELDS, STAFF_FIELDS, _flag, make_ticket  # noqa: F401
+from ticket_analysis.jsonl import now_iso, read_jsonl, write_jsonl
+from ticket_analysis.masking import prepare_ticket_text
+from ticket_analysis.names import Cmdb, Instance, match_mention
+from ticket_analysis.paths import DATA_DIR, REPO_ROOT
+from ticket_analysis.taxonomy import TAXONOMY, TAXONOMY_VERSION, TicketClassification
+from tools.schema import OUTPUT_SCHEMA
 
 TICKETS_PATH = DATA_DIR / "tickets.jsonl"
 LABELS_PATH = DATA_DIR / "labels.csv"
 RUNS_DIR = DATA_DIR / "runs"
 REPORTS_DIR = DATA_DIR / "reports"
-PROMPTS_DIR = ROOT / "prompts"
+PROMPTS_DIR = REPO_ROOT / "prompts"
 
 DEFAULT_MODEL = "claude-opus-5-5"
 DEFAULT_EFFORT = "low"
@@ -60,7 +58,7 @@ PRICES_PER_MTOK = {
 
 
 def load_env() -> None:
-    load_dotenv(ROOT / ".env")
+    load_dotenv(REPO_ROOT / ".env")
 
 
 def merge_tickets(new_tickets: list[dict], path: Path = TICKETS_PATH) -> tuple[int, int]:

@@ -4,9 +4,10 @@ a Markdown report to data/reports/."""
 import argparse
 from datetime import datetime
 
-from common import (REPORTS_DIR, compute_metrics, fmt_pct, label_metrics, latest_rows, md_table, now_iso,
-                    read_jsonl, read_labels, resolve_run, summary_rows)
-from schema import TAXONOMY
+from ticket_analysis.jsonl import now_iso, read_jsonl
+from ticket_analysis.taxonomy import TAXONOMY
+from tools.common import (REPORTS_DIR, compute_metrics, fmt_pct, label_metrics, latest_rows, md_table, read_labels,
+                          resolve_run, summary_rows)
 
 TYPE_IDS = [t["id"] for t in TAXONOMY["types"]]
 

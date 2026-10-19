@@ -20,10 +20,12 @@ from sklearn.metrics import accuracy_score, f1_score, precision_recall_fscore_su
 from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_test_split
 from sklearn.pipeline import Pipeline
 
-from common import DATA_DIR, REPORTS_DIR, fmt_pct, md_table, now_iso, read_jsonl
+from ticket_analysis.jsonl import now_iso, read_jsonl
+from ticket_analysis.paths import DATA_DIR
 from ticket_analysis.text_clean import clean_text
 from ticket_analysis.ticket_types import features
 from ticket_analysis.type_rules import RULES, apply_rules
+from tools.common import REPORTS_DIR, fmt_pct, md_table
 
 OTHER = "(merged rare)"  # not "Other", which is a real Zendesk category
 DEFAULT_TARGETS = ["zendesk_type", "category"]

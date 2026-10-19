@@ -9,8 +9,10 @@ import re
 import webbrowser
 from pathlib import Path
 
-from common import (_PROMPT_TAGS, _SECRET_PATTERNS, DATA_DIR, PROMPT_TAG_REPLACEMENT, TICKETS_PATH, latest_rows,
-                    now_iso, prepare_ticket_text, read_jsonl, resolve_run)
+from ticket_analysis.jsonl import now_iso, read_jsonl
+from ticket_analysis.masking import PROMPT_TAG_REPLACEMENT, _PROMPT_TAGS, _SECRET_PATTERNS, prepare_ticket_text
+from ticket_analysis.paths import DATA_DIR
+from tools.common import TICKETS_PATH, latest_rows, resolve_run
 
 TEMPLATE_PATH = Path(__file__).parent / "viewer_template.html"
 PLACEHOLDER = "__VIEWER_DATA__"

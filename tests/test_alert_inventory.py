@@ -1,6 +1,6 @@
-from alert_layouts import Vocabulary, group_layouts, inventory, layout_signature, same_layout
 from tests.test_alert_layouts import LABELED, LABELED_V2, MARKDOWN
 from tests.test_alert_parser import TABLE
+from tools.alert_layouts import Vocabulary, group_layouts, inventory, layout_signature, same_layout
 
 
 def tickets():

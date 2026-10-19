@@ -6,8 +6,10 @@ import json
 import re
 from pathlib import Path
 
-from common import DW_FIELDS, STAFF_FIELDS, TICKETS_PATH, make_ticket, merge_tickets, read_jsonl
-from fetch_tickets import WEAK_LABEL_TITLE
+from ticket_analysis.jsonl import read_jsonl
+from ticket_analysis.tickets import DW_FIELDS, STAFF_FIELDS, make_ticket
+from tools.common import TICKETS_PATH, merge_tickets
+from tools.fetch_tickets import WEAK_LABEL_TITLE
 
 # Accepted CSV headers per field, compared case-insensitively.
 COLUMN_ALIASES = {

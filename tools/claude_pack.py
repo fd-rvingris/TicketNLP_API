@@ -1,11 +1,11 @@
 """Files for labeling and taxonomy work in a Claude chat (claude.ai), and import of what it returns.
 
-  python claude_pack.py labels       # data/claude_pack/labels/batch_NNN.jsonl to upload, in batches
-  python claude_pack.py taxonomy     # data/claude_pack/taxonomy/ digest of every ticket, to upload
-  python claude_pack.py import-labels data/claude_pack/returned/*.jsonl
-  python claude_pack.py check-taxonomy data/claude_pack/returned/taxonomy_v1.json
-  python claude_pack.py types        # data/claude_pack/types/round_NNN/: type labeling batches and prompt
-  python claude_pack.py import-types data/claude_pack/returned/types_round_NNN_*.jsonl
+  python -m tools.claude_pack labels       # data/claude_pack/labels/batch_NNN.jsonl to upload, in batches
+  python -m tools.claude_pack taxonomy     # data/claude_pack/taxonomy/ digest of every ticket, to upload
+  python -m tools.claude_pack import-labels data/claude_pack/returned/*.jsonl
+  python -m tools.claude_pack check-taxonomy data/claude_pack/returned/taxonomy_v1.json
+  python -m tools.claude_pack types        # data/claude_pack/types/round_NNN/: type labeling batches and prompt
+  python -m tools.claude_pack import-types data/claude_pack/returned/types_round_NNN_*.jsonl
 
 Type labeling batches are cleaned of email boilerplate (text_clean.py) before masking, skip tickets
 already labeled or in an earlier round, and over-sample tickets the current model leans toward a weak
@@ -14,7 +14,7 @@ original taxonomy sample (later labels win).
 
 Everything written is masked with common.mask_secrets, as text sent to the model is. Imported
 labels go to data/labels/claude_spans.jsonl (not the DBA label file), in the server_labels row
-format, so `python server_labels.py evaluate --labels data/labels/claude_spans.jsonl` scores the
+format, so `python -m tools.server_labels evaluate --labels data/labels/claude_spans.jsonl` scores the
 detector against them. The prompts are docs/claude-labeling-prompt.md and
 docs/claude-taxonomy-prompt.md. Prints counts only, never ticket text.
 """
@@ -28,12 +28,14 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import ticket_analysis.server_detector as sd
-import server_labels as sl
-from baseline import read_labels
-from ticket_analysis.ticket_types import features
-from common import DATA_DIR, mask_secrets, now_iso, read_jsonl, write_jsonl
-from schema import TAXONOMY, TAXONOMY_PATH, TAXONOMY_VERSION
+import tools.server_labels as sl
+from ticket_analysis.jsonl import now_iso, read_jsonl, write_jsonl
+from ticket_analysis.masking import mask_secrets
+from ticket_analysis.paths import DATA_DIR
+from ticket_analysis.taxonomy import TAXONOMY, TAXONOMY_PATH, TAXONOMY_VERSION
 from ticket_analysis.text_clean import clean_text
+from ticket_analysis.ticket_types import features
+from tools.baseline import read_labels
 from tools.ticket_types import CLAUDE_TYPES_PATH, LABEL_PATHS, load_or_train, prompt_rules
 
 PACK_DIR = DATA_DIR / "claude_pack"
@@ -160,7 +162,7 @@ def type_prompt(round_name: str, batch_names: list[str]) -> str:
    early, ask Claude to continue and append the rest to the same file.
 4. Import, which you can do after each batch; it reports which tickets are still missing:
 
-    python claude_pack.py import-types data/claude_pack/returned/types_{round_name}_*.jsonl
+    python -m tools.claude_pack import-types data/claude_pack/returned/types_{round_name}_*.jsonl
 
 ## Prompt
 

@@ -9,10 +9,10 @@ import argparse
 import statistics
 from pathlib import Path
 
-from common import fmt_pct
 from ticket_analysis.jsonl import read_jsonl
 from ticket_analysis.paths import DATA_DIR
 from ticket_analysis.text_clean import PATTERNS, removed_chars
+from tools.common import fmt_pct
 
 TICKET_FILES = [DATA_DIR / "train_tickets.jsonl", DATA_DIR / "test_tickets.jsonl"]
 

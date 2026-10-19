@@ -1,7 +1,7 @@
 import json
 
-from common import make_ticket
-from load_export import from_csv, from_json
+from ticket_analysis.tickets import make_ticket
+from tools.load_export import from_csv, from_json
 
 HEADER = "ticket_id,subject,description,organization_id,organization_name,created_at,type,sub type,category,categories,dw_servers,is_alert\n"
 
@@ -85,8 +85,9 @@ def test_jsonl_round_trip_keeps_staff(tmp_path):
 
 def test_exclude_drops_tickets_already_pulled(tmp_path):
     import pytest
-    from common import make_ticket, write_jsonl
-    from load_export import without_tickets_in
+    from ticket_analysis.jsonl import write_jsonl
+    from ticket_analysis.tickets import make_ticket
+    from tools.load_export import without_tickets_in
     old = tmp_path / "train.jsonl"
     write_jsonl(old, [make_ticket("1", "a", "b"), make_ticket("3", "a", "b")])
     kept, dropped = without_tickets_in([make_ticket(str(i), "s", "d") for i in range(1, 5)], [old])

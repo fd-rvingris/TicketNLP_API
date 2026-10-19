@@ -5,9 +5,10 @@ import numpy as np
 import pytest
 import requests
 
-import detector_ui as ui
 import ticket_analysis.server_detector as sd
-from common import ZendeskClient, make_ticket
+import tools.detector_ui as ui
+from ticket_analysis.tickets import make_ticket
+from tools.common import ZendeskClient
 
 
 class FixedModel(sd.ServerModel):
