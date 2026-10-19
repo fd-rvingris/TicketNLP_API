@@ -69,6 +69,49 @@ def test_import_writes_server_label_rows(tmp_path, monkeypatch):
     assert (span["text"], span["host"], span["kind"]) == ("SQLA07", "sqla07", "host")
 
 
+def test_labels_from_label_files_relabel_the_same_tickets(tmp_path, monkeypatch):
+    from ticket_analysis.jsonl import write_jsonl
+    test, train = [human(1, "on fakesql01"), human(2, "x")], [human(3, "Password=Hunter2 on pgfake1:5432")]
+    old = tmp_path / "old.jsonl"
+    write_jsonl(old, [{"ticket_id": "3", "labeler": "claude"}, {"ticket_id": "1", "labeler": "claude"},
+                      {"ticket_id": "3", "labeler": "claude"}, {"ticket_id": "9", "labeler": "claude"}])
+    monkeypatch.setattr(cp, "read_jsonl", lambda p: test if p.name == "test_tickets.jsonl" else
+                        train if p.name == "train_tickets.jsonl" else common_read(p))
+    out = tmp_path / "batches"
+    cp.main(["labels", "--from-labels", str(old), "--out-dir", str(out)])
+    rows = common_read(out / "batch_001.jsonl")
+    assert [r["ticket_id"] for r in rows] == ["3", "1"]  # label file order, once each, unknown ids left out
+    assert "Hunter2" not in rows[0]["description"]
+
+
+def test_check_reply_takes_the_last_code_block_and_checks_ticket_ids(tmp_path, capsys):
+    from ticket_analysis.jsonl import write_jsonl
+    batch = tmp_path / "batch_001.jsonl"
+    write_jsonl(batch, [{"ticket_id": "1"}, {"ticket_id": "2"}])
+    row1 = {"ticket_id": "1", "status": "done", "mentions": [{"text": "SQLA01\\REPORTS", "kind": "host_instance"}]}
+    row2 = {"ticket_id": "2", "status": "done", "mentions": []}
+    reply = tmp_path / "reply.txt"
+    reply.write_text("Draft:\n```\n{}\n```\nFinal:\n```jsonl\n" + json.dumps(row1) + "\n\n" + json.dumps(row2) + "\n```\n",
+                     encoding="utf-8")
+    out = tmp_path / "rows.jsonl"
+    cp.main(["check-reply", str(reply), "--batch", str(batch), "--out", str(out)])
+    assert common_read(out) == [row1, row2] and "2 tickets, 1 mentions" in capsys.readouterr().out
+
+    def unusable(text):
+        reply.write_text(text, encoding="utf-8")
+        try:
+            cp.main(["check-reply", str(reply), "--batch", str(batch), "--out", str(tmp_path / "bad.jsonl")])
+        except SystemExit as e:
+            assert not (tmp_path / "bad.jsonl").exists()
+            return str(e)
+        raise AssertionError("accepted an unusable reply")
+
+    assert "1 tickets missing" in unusable("```\n" + json.dumps(row1) + "\n```")
+    assert "1 tickets repeated" in unusable("\n".join(json.dumps(r) for r in (row1, row2, row2)))  # no code block
+    assert "not in the batch" in unusable(json.dumps(row1) + "\n" + json.dumps(row2) + '\n{"ticket_id": "7"}')
+    assert "line 2 is not JSON" in unusable("```\n" + json.dumps(row1) + "\nnot json\n```")
+
+
 def test_check_taxonomy(tmp_path, capsys):
     good = {"version": "v1", "types": [{"id": "performance", "label": "Performance", "definition": "Slow."},
                                        {"id": "unknown", "label": "Unknown", "definition": "Unclear."}],

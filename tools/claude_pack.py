@@ -3,6 +3,11 @@
   python -m tools.claude_pack labels       # data/claude_pack/labels/batch_NNN.jsonl to upload, in batches
   python -m tools.claude_pack taxonomy     # data/claude_pack/taxonomy/ digest of every ticket, to upload
   python -m tools.claude_pack import-labels data/claude_pack/returned/*.jsonl
+  python -m tools.claude_pack labels --from-labels data/labels/claude_spans.jsonl --out-dir DIR  # relabel those tickets
+  python -m tools.claude_pack check-reply REPLY.txt --batch DIR/batch_001.jsonl --out labels_001.jsonl
+
+tools/claude_relabel.ps1 runs the labeling batches through the Claude Code CLI, one fresh session per
+batch, with check-reply and import-labels.
   python -m tools.claude_pack check-taxonomy data/claude_pack/returned/taxonomy_v1.json
   python -m tools.claude_pack types        # data/claude_pack/types/round_NNN/: type labeling batches and prompt
   python -m tools.claude_pack import-types data/claude_pack/returned/types_round_NNN_*.jsonl
@@ -80,12 +85,21 @@ def cmd_labels(args) -> None:
     train = read_jsonl(DATA_DIR / "train_tickets.jsonl")
     if not test:
         raise SystemExit("Missing data/test_tickets.jsonl")
-    # The same human sample the DBA Label tab hands out, so Claude and DBA labels can be compared.
-    picked = sl.sample_tickets(test, args.test_human, args.seed, "human")
-    picked += sl.sample_tickets(train, args.train_human, args.seed, "human")
-    picked += sl.sample_tickets(test, args.alerts, args.seed, "alerts")
+    if args.from_labels:
+        # The tickets of existing label files, in their order, to label them again
+        by_id = {str(t["ticket_id"]): t for t in train + test}
+        ids = list(dict.fromkeys(str(r["ticket_id"]) for path in args.from_labels for r in read_jsonl(path)
+                                 if r.get("ticket_id") is not None))
+        picked = [by_id[i] for i in ids if i in by_id]
+        if len(picked) < len(ids):
+            print(f"{len(ids) - len(picked):,} labeled tickets are not in the ticket files and were left out")
+    else:
+        # The same human sample the DBA Label tab hands out, so Claude and DBA labels can be compared.
+        picked = sl.sample_tickets(test, args.test_human, args.seed, "human")
+        picked += sl.sample_tickets(train, args.train_human, args.seed, "human")
+        picked += sl.sample_tickets(test, args.alerts, args.seed, "alerts")
     records = [label_record(t, args.max_chars) for t in picked]
-    out_dir = PACK_DIR / "labels"
+    out_dir = args.out_dir or PACK_DIR / "labels"
     out_dir.mkdir(parents=True, exist_ok=True)
     for old in out_dir.glob("batch_*.jsonl"):
         old.unlink()
@@ -95,8 +109,9 @@ def cmd_labels(args) -> None:
     kinds = Counter(r["kind"] for r in records)
     print(f"{len(records):,} tickets ({kinds['human']:,} human, {kinds['alert']:,} alerts) in {len(groups)} "
           f"batches under {out_dir}")
-    print("Upload one batch per message with docs/claude-labeling-prompt.md; save each reply as "
-          "data/claude_pack/returned/labels_NNN.jsonl")
+    if not args.out_dir:
+        print("Upload one batch per message with docs/claude-labeling-prompt.md; save each reply as "
+              "data/claude_pack/returned/labels_NNN.jsonl (or run tools/claude_relabel.ps1)")
 
 
 # --- Type labeling rounds ------------------------------------------------------------
@@ -447,6 +462,49 @@ def cmd_import_labels(args) -> None:
         print(f"  {n:,} x {issue}")
 
 
+_FENCE = re.compile(r"```[A-Za-z]*[^\S\n]*\n(.*?)```", re.S)
+
+
+def reply_rows(reply: str) -> list[dict]:
+    """The JSONL rows of a labeling reply: the lines of its last code block, or of the whole reply when
+    it has none. Raises ValueError on a line that is not a JSON object."""
+    blocks = _FENCE.findall(reply)
+    rows = []
+    for n, line in enumerate((blocks[-1] if blocks else reply).splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            raise ValueError(f"line {n} is not JSON") from None
+        if not isinstance(row, dict):
+            raise ValueError(f"line {n} is not a JSON object")
+        rows.append(row)
+    return rows
+
+
+def reply_problems(rows: list[dict], batch: list[dict]) -> list[str]:
+    """What makes a reply unusable for its batch: tickets missing, repeated or not in the batch."""
+    want = [str(r["ticket_id"]) for r in batch]
+    got = Counter(str(r.get("ticket_id")) for r in rows)
+    counts = {"missing": sum(1 for t in want if t not in got), "not in the batch": sum(1 for t in got if t not in set(want)),
+              "repeated": sum(1 for n in got.values() if n > 1)}
+    return [f"{n} tickets {what}" for what, n in counts.items() if n]
+
+
+def cmd_check_reply(args) -> None:
+    """Check one reply against its batch and write its rows for import-labels; exit 1 if unusable."""
+    try:
+        rows = reply_rows(args.reply.read_text(encoding="utf-8", errors="replace"))
+    except ValueError as e:
+        raise SystemExit(f"Unusable reply: {e}")
+    problems = reply_problems(rows, read_jsonl(args.batch))
+    if problems:
+        raise SystemExit(f"Unusable reply: {'; '.join(problems)}")
+    write_jsonl(args.out, rows)
+    print(f"{len(rows):,} tickets, {sum(len(r.get('mentions') or []) for r in rows):,} mentions")
+
+
 def cmd_check_taxonomy(args) -> None:
     """Check a returned taxonomy has the shape taxonomy.json and schema.py expect."""
     t = json.loads(Path(args.file).read_text(encoding="utf-8"))
@@ -484,6 +542,13 @@ def parse_args(argv=None):
     lab.add_argument("--max-chars", type=int, default=sd.DEFAULT_MAX_CHARS)
     lab.add_argument("--batch-chars", type=int, default=60_000, help="text characters per batch file")
     lab.add_argument("--batch-tickets", type=int, default=25)
+    lab.add_argument("--from-labels", type=Path, nargs="+",
+                     help="label the tickets of these label files again instead of drawing a sample")
+    lab.add_argument("--out-dir", type=Path, help="default data/claude_pack/labels")
+    rep = sub.add_parser("check-reply", help="check a labeling reply against its batch and write its rows")
+    rep.add_argument("reply", type=Path, help="the reply as text, with the JSONL in a code block")
+    rep.add_argument("--batch", type=Path, required=True, help="the batch file the reply answers")
+    rep.add_argument("--out", type=Path, required=True, help="JSONL for import-labels")
     tax = sub.add_parser("taxonomy", help="write the taxonomy digest to upload")
     tax.add_argument("--sample", type=int, default=600, help="human tickets with text, spread across categories")
     tax.add_argument("--sample-chars", type=int, default=800, help="description characters per sampled ticket")
@@ -513,7 +578,7 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
-    {"labels": cmd_labels, "taxonomy": cmd_taxonomy, "import-labels": cmd_import_labels,
+    {"labels": cmd_labels, "taxonomy": cmd_taxonomy, "import-labels": cmd_import_labels, "check-reply": cmd_check_reply,
      "check-taxonomy": cmd_check_taxonomy, "types": cmd_types, "import-types": cmd_import_types}[args.command](args)
 
 
