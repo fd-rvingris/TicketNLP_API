@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "API (local)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "api",
+      "args": ["--local", "--no-reload"],
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "API (local, debug responses)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "api",
+      "args": ["--local", "--no-reload", "--debug-responses"],
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+# Only the package, the API and the requirements go into the image. Everything else stays out, above all
+# data/ (client tickets, models and snapshots) and .env (secrets).
+*
+!ticket_analysis/
+!api/
+!requirements.txt
+!requirements-api.txt
+**/__pycache__
+**/*.pyc

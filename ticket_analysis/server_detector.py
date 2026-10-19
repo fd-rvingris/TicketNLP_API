@@ -300,18 +300,60 @@ class LocalServerDirectory:
         for parsed in ticket_names({"alert_fields": ticket.get("alert_fields")}):
             self.add(org, name_key, parsed, "alert", env)
 
+    def add_cmdb_record(self, org, client_name, server_name, environment=None) -> tuple[str, ParsedName] | None:
+        """One CMDB server record (a row of data/instances.csv). Returns the client key and the parsed
+        name, or None when the name is not server-shaped (counted in skipped) or no client is given."""
+        parsed = normalize_reference(server_name)
+        if not parsed:
+            self.skipped += 1
+            return None
+        org = str(org or "").strip() or None
+        name = (client_name or "").strip().lower()
+        name_key = f"name:{name}" if name else None
+        self.add(org, name_key, parsed, "cmdb", (environment or "").strip() or None)
+        return (org or name_key, parsed) if org or name_key else None
+
     def add_instances_csv(self, path: Path) -> None:
         import csv
         with path.open(encoding="utf-8-sig", newline="") as f:
             for row in csv.DictReader(f):
-                parsed = normalize_reference(row.get("server_name"))
-                if not parsed:
-                    self.skipped += 1
-                    continue
-                org = (row.get("zendesk_organization_id") or "").strip() or None
-                name = (row.get("client_name") or "").strip().lower()
-                self.add(org, f"name:{name}" if name else None, parsed, "cmdb",
-                         (row.get("environment") or "").strip() or None)
+                self.add_cmdb_record(row.get("zendesk_organization_id"), row.get("client_name"),
+                                     row.get("server_name"), row.get("environment"))
+
+    def to_dict(self) -> dict:
+        """Every name as stored, per client key, for a directory snapshot: hosts with whether a confirmed
+        source named them and the environments those sources gave (with counts), (host, instance) pairs
+        with the same flag, and the name-to-organization aliases. from_dict() restores an identical copy."""
+        keys = sorted(set(self._hosts) | set(self._pairs))
+        clients = {}
+        for key in keys:
+            hosts = [{"host": h, "confirmed": h in self._confirmed_hosts.get(key, ()),
+                      "environments": dict(sorted(self._env.get((key, h), {}).items()))}
+                     for h in sorted(self._hosts.get(key, ()))]
+            pairs = [{"host": h, "instance": i, "confirmed": (h, i) in self._confirmed_pairs.get(key, ())}
+                     for h, i in sorted(self._pairs.get(key, ()))]
+            clients[key] = {"hosts": hosts, "instances": pairs}
+        return {"clients": clients, "aliases": dict(sorted(self._alias.items()))}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LocalServerDirectory":
+        d = cls()
+        for key, entry in (data.get("clients") or {}).items():
+            for r in entry.get("hosts") or ():
+                d._hosts[key].add(r["host"])
+                if r.get("confirmed"):
+                    d._confirmed_hosts[key].add(r["host"])
+                if r.get("environments"):
+                    d._env[(key, r["host"])].update(r["environments"])
+            for r in entry.get("instances") or ():
+                pair = (r["host"], r["instance"])
+                d._hosts[key].add(r["host"])
+                d._pairs[key].add(pair)
+                if r.get("confirmed"):
+                    d._confirmed_pairs[key].add(pair)
+                    d._confirmed_hosts[key].add(r["host"])
+        d._alias = dict(data.get("aliases") or {})
+        return d
 
     @classmethod
     def from_sources(cls, tickets: list[dict], instances_path: Path | None = INSTANCES_PATH) -> "LocalServerDirectory":
@@ -988,6 +1030,14 @@ class ServerModel:
             self._know[key] = Knowledge(directory, self.stop)
         return self._know[key]
 
+    def forget_knowledge(self, keep=()) -> None:
+        """Drop the cached Knowledge of every directory not in keep, so a service that swaps in new
+        directories does not hold on to the old ones."""
+        kept = {id(d) for d in keep}
+        for key in list(self._know):  # a copy: inference threads may add entries meanwhile
+            if key not in kept:
+                self._know.pop(key, None)
+
     def fit(self, examples: list[dict]) -> "ServerModel":
         y = [c["label"] for c in examples]
         main = _Linear(self.seed, **self.linear_params) if self.kind == "logreg" else _Boosted(self.seed)
@@ -1034,6 +1084,22 @@ def decide(p_host: float, p_inst: float, host_threshold: float, instance_thresho
 
 
 # --- Detection, pairing and status ---------------------------------------------
+
+# What detect_servers() returns in 'kind' and 'status', with a one-line meaning each (the API's catalog).
+KINDS = {
+    "host": "A server name on its own (its default instance, MSSQLSERVER, counts as the server).",
+    "host_instance": "A HOST\\INSTANCE name: a named instance on a given server.",
+    "bare_instance": "A named instance written without its server; 'host' is set when it could be paired.",
+}
+STATUSES = {
+    "known": "The client's known names include this host, pair or instance.",
+    "new_instance_on_known_host": "The host is known for the client but this instance on it is not.",
+    "possible_new_host": "Not among the client's known hosts (or the client is unknown).",
+    "possible_new_instance": "A bare instance the client is not known to have, or paired with a host that does not list it.",
+    "ambiguous": "A bare instance that several of the client's hosts have; those hosts are its candidates.",
+    "typo_of_known": "One edit away from a known name of the client with the same shape; the known name replaces it.",
+}
+FIELDS = {"subject": "The ticket subject.", "description": "The ticket description (its first comment)."}
 
 
 def _evidence(text: str, start: int, end: int, width: int = 40) -> str:

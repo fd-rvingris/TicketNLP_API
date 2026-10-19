@@ -1,0 +1,1585 @@
+openapi: 3.1.0
+info:
+  title: Ticket Analysis API
+  description: |
+    Finds the SQL Server hosts and instances a Fortified Data support ticket names, resolved against the
+    client's known names, and classifies the ticket's taxonomy type and intent. One ticket per request.
+    Callers: Keystone, AI assistants through the MCP endpoint at /mcp (same operations, same auth), and
+    other applications.
+
+    **Versioning.** The URL version (/v1) changes only for breaking changes. Within v1, changes are
+    additive: new optional request fields, new response fields and new enum values (new types, intents,
+    statuses, sources or rule names). Clients must ignore response fields they do not know and accept
+    enum values they do not know; `GET /v1/catalog` lists the current values. Every response carries
+    `apiVersion` and a `models` object with the model and directory versions that produced it; models
+    are retrained and the directory refreshed without an API change.
+
+    **Auth.** Send an API key in `X-API-Key` (ApiKeyAuth) or an Entra ID bearer token (EntraBearer),
+    whichever the deployment is configured for. `/health` and `/ready` need neither.
+
+    **Errors** are RFC 9457 problem details (`application/problem+json`) with a stable `code`. They
+    never repeat the request's text. Bodies are limited to 1 MB.
+
+    **Data.** Ticket text is analyzed in memory and never stored or logged.
+  version: 1.0.0
+paths:
+  /v1/detect:
+    post:
+      tags:
+      - analysis
+      summary: Detect servers and instances
+      description: The hosts, bare instance names and HOST\INSTANCE names in one ticket, as a compact `entities`
+        view and one `detections` entry per occurrence. With `zendeskOrgId`, names are resolved against that client's
+        known servers and instances.
+      operationId: detect_v1_detect_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketRequest'
+            examples:
+              access_request:
+                summary: Access request email (rule:access_request)
+                value:
+                  text: "CAUTION: This email originated from outside of the organization. Do not click links or\
+                    \ open attachments unless you recognize the sender and know the content is safe.\r\n\r\nHi Fortified\
+                    \ Data Support,\r\n\r\nCould you please help me get READ access for the schema below, Server=FAKESQL01,\
+                    \ Database=FAKE_DB, for the execution user CORP\\svc-fake-batch. Please approve.\r\n\r\nThanks,\r\
+                    \nJane Doe\r\nData Engineer | Fake Co\r\n"
+                  subject: READ access request
+                  zendeskOrgId: 999001
+                  ticketId: '12345'
+              servers:
+                summary: A host, a bare instance and a HOST\INSTANCE name
+                value:
+                  text: The REPORTS instance on FAKESQL01 is slow since this morning. FAKESQL02\FINANCE is fine.
+                  subject: Slow reports
+                  zendeskOrgId: '999001'
+              alert:
+                summary: A collector alert (alert-name table)
+                value:
+                  text: |
+                    AlertId 123456
+                    Alert FD - SQL Agent Job Failure
+                    Client Name Fake Co
+                    Server FAKESQL01
+                    Platform Microsoft SQL Server
+                    Instance Job: Nightly Load, Category: Data
+                    Message Error: The job failed.
+                    Severity Warning
+                    Level Failure
+                    PreviousLevel OK
+                    Open Date 07/21/2026 17:00:00 UTC
+                  subject: 'Fake Co - Alert #42 - FD - SQL Agent Job Failure'
+                  zendeskOrgId: '999001'
+              text_only:
+                summary: 'Text only: no subject and no client'
+                value:
+                  text: Disk space is low on the data drive of FAKESQL01.
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectResponse'
+        '400':
+          description: The body is not valid JSON.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: No or invalid credentials.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Valid credentials without the required app role.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: The body is larger than 1 MB.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '415':
+          description: The body is not application/json.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: The body does not match the schema.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          description: An internal error.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: The models are not loaded yet.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - ApiKeyAuth: []
+      - EntraBearer: []
+  /v1/classify:
+    post:
+      tags:
+      - analysis
+      summary: Classify type and intent
+      description: 'The taxonomy type and intent of one ticket: the alert-name table for alerts, then the keyword
+        rules, then the model, with where each came from and an uncertain flag. `zendeskOrgId` is accepted and ignored.'
+      operationId: classify_v1_classify_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketRequest'
+            examples:
+              access_request:
+                summary: Access request email (rule:access_request)
+                value:
+                  text: "CAUTION: This email originated from outside of the organization. Do not click links or\
+                    \ open attachments unless you recognize the sender and know the content is safe.\r\n\r\nHi Fortified\
+                    \ Data Support,\r\n\r\nCould you please help me get READ access for the schema below, Server=FAKESQL01,\
+                    \ Database=FAKE_DB, for the execution user CORP\\svc-fake-batch. Please approve.\r\n\r\nThanks,\r\
+                    \nJane Doe\r\nData Engineer | Fake Co\r\n"
+                  subject: READ access request
+                  zendeskOrgId: 999001
+                  ticketId: '12345'
+              servers:
+                summary: A host, a bare instance and a HOST\INSTANCE name
+                value:
+                  text: The REPORTS instance on FAKESQL01 is slow since this morning. FAKESQL02\FINANCE is fine.
+                  subject: Slow reports
+                  zendeskOrgId: '999001'
+              alert:
+                summary: A collector alert (alert-name table)
+                value:
+                  text: |
+                    AlertId 123456
+                    Alert FD - SQL Agent Job Failure
+                    Client Name Fake Co
+                    Server FAKESQL01
+                    Platform Microsoft SQL Server
+                    Instance Job: Nightly Load, Category: Data
+                    Message Error: The job failed.
+                    Severity Warning
+                    Level Failure
+                    PreviousLevel OK
+                    Open Date 07/21/2026 17:00:00 UTC
+                  subject: 'Fake Co - Alert #42 - FD - SQL Agent Job Failure'
+                  zendeskOrgId: '999001'
+              text_only:
+                summary: 'Text only: no subject and no client'
+                value:
+                  text: Disk space is low on the data drive of FAKESQL01.
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassifyResponse'
+        '400':
+          description: The body is not valid JSON.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: No or invalid credentials.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Valid credentials without the required app role.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: The body is larger than 1 MB.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '415':
+          description: The body is not application/json.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: The body does not match the schema.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          description: An internal error.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: The models are not loaded yet.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - ApiKeyAuth: []
+      - EntraBearer: []
+  /v1/analyze:
+    post:
+      tags:
+      - analysis
+      summary: Detect and classify
+      description: 'Both /v1/detect and /v1/classify for one ticket, from one request: `detection` and `taxonomy`
+        hold their bodies without the envelope fields.'
+      operationId: analyze_v1_analyze_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TicketRequest'
+            examples:
+              access_request:
+                summary: Access request email (rule:access_request)
+                value:
+                  text: "CAUTION: This email originated from outside of the organization. Do not click links or\
+                    \ open attachments unless you recognize the sender and know the content is safe.\r\n\r\nHi Fortified\
+                    \ Data Support,\r\n\r\nCould you please help me get READ access for the schema below, Server=FAKESQL01,\
+                    \ Database=FAKE_DB, for the execution user CORP\\svc-fake-batch. Please approve.\r\n\r\nThanks,\r\
+                    \nJane Doe\r\nData Engineer | Fake Co\r\n"
+                  subject: READ access request
+                  zendeskOrgId: 999001
+                  ticketId: '12345'
+              servers:
+                summary: A host, a bare instance and a HOST\INSTANCE name
+                value:
+                  text: The REPORTS instance on FAKESQL01 is slow since this morning. FAKESQL02\FINANCE is fine.
+                  subject: Slow reports
+                  zendeskOrgId: '999001'
+              alert:
+                summary: A collector alert (alert-name table)
+                value:
+                  text: |
+                    AlertId 123456
+                    Alert FD - SQL Agent Job Failure
+                    Client Name Fake Co
+                    Server FAKESQL01
+                    Platform Microsoft SQL Server
+                    Instance Job: Nightly Load, Category: Data
+                    Message Error: The job failed.
+                    Severity Warning
+                    Level Failure
+                    PreviousLevel OK
+                    Open Date 07/21/2026 17:00:00 UTC
+                  subject: 'Fake Co - Alert #42 - FD - SQL Agent Job Failure'
+                  zendeskOrgId: '999001'
+              text_only:
+                summary: 'Text only: no subject and no client'
+                value:
+                  text: Disk space is low on the data drive of FAKESQL01.
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyzeResponse'
+        '400':
+          description: The body is not valid JSON.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: No or invalid credentials.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Valid credentials without the required app role.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: The body is larger than 1 MB.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '415':
+          description: The body is not application/json.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: The body does not match the schema.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          description: An internal error.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: The models are not loaded yet.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - ApiKeyAuth: []
+      - EntraBearer: []
+  /v1/catalog:
+    get:
+      tags:
+      - catalog
+      summary: Keys and values
+      description: Every detection key and field with its enumerated values, the taxonomy's types and intents, and
+        the type and intent sources (including each keyword rule), generated from the code and taxonomy.json. Lists
+        no client's names.
+      operationId: catalog_v1_catalog_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogResponse'
+        '400':
+          description: The body is not valid JSON.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: No or invalid credentials.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Valid credentials without the required app role.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: The body is larger than 1 MB.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '415':
+          description: The body is not application/json.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: The body does not match the schema.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          description: An internal error.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: The models are not loaded yet.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      security:
+      - ApiKeyAuth: []
+      - EntraBearer: []
+  /health:
+    get:
+      tags:
+      - probes
+      summary: Liveness
+      description: 200 while the process is up. No auth, no detail.
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /ready:
+    get:
+      tags:
+      - probes
+      summary: Readiness
+      description: 200 when both models and the directory are loaded, else 503. No auth, no model detail.
+      operationId: ready_ready_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '503':
+          description: The models are not loaded.
+          content:
+            application/problem+json: {}
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  schemas:
+    AlertInfo:
+      properties:
+        family:
+          type: string
+          title: Family
+          description: The alert family.
+          examples:
+          - collector
+        layout:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Layout
+          description: The alert layout.
+          examples:
+          - collector_labeled
+        alertName:
+          type: string
+          title: Alertname
+          description: The alert name parsed from the text.
+          examples:
+          - FD - SQL Agent Job Failure
+        tableEntry:
+          anyOf:
+          - $ref: '#/components/schemas/AlertTableEntry'
+          - type: 'null'
+          description: The alert-name table row, when the table has the name.
+      type: object
+      required:
+      - family
+      - layout
+      - alertName
+      - tableEntry
+      title: AlertInfo
+      description: The monitoring alert the parser recognized in the text.
+    AlertTableEntry:
+      properties:
+        type:
+          type: string
+          title: Type
+          description: The type the table gives.
+          examples:
+          - scheduled_jobs
+        decides:
+          type: string
+          title: Decides
+          description: 'Whether the name decides the type: Yes, Partly or No.'
+          examples:
+          - Partly
+        tickets:
+          type: integer
+          title: Tickets
+          description: Alert tickets with this name when the table was made.
+          examples:
+          - 1259
+      type: object
+      required:
+      - type
+      - decides
+      - tickets
+      title: AlertTableEntry
+      description: |-
+        The alert-name table row (taxonomy notes) the alert matched. The table's free-text note is not
+        returned: it was written from real tickets.
+    AnalyzeResponse:
+      properties:
+        requestId:
+          type: string
+          title: Requestid
+          description: The request id, also in the X-Request-Id header.
+          examples:
+          - 3f2b8c1e9a7d4e6f8b0c2d4e6f8a0b1c
+        apiVersion:
+          type: string
+          title: Apiversion
+          description: The API contract version.
+          examples:
+          - 1.0.0
+        ticketId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ticketid
+          description: The caller's ticketId, echoed; null when not given.
+          examples:
+          - '12345'
+        models:
+          $ref: '#/components/schemas/ModelVersions'
+          description: The model and directory versions that produced the response.
+        detection:
+          $ref: '#/components/schemas/DetectionResult'
+          description: What POST /v1/detect returns, without the envelope.
+        taxonomy:
+          $ref: '#/components/schemas/ClassificationResult'
+          description: What POST /v1/classify returns, without the envelope.
+      type: object
+      required:
+      - requestId
+      - apiVersion
+      - models
+      - detection
+      - taxonomy
+      title: AnalyzeResponse
+      description: 'The response of POST /v1/analyze: both bodies without their own envelope fields.'
+    Candidate:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: A type or intent id.
+          examples:
+          - access_security
+        p:
+          type: number
+          title: P
+          description: The model's probability.
+          examples:
+          - 0.33
+      type: object
+      required:
+      - id
+      - p
+      title: Candidate
+      description: A type or intent the model considered, with its probability.
+    CatalogResponse:
+      properties:
+        requestId:
+          type: string
+          title: Requestid
+          description: The request id, also in the X-Request-Id header.
+          examples:
+          - 3f2b8c1e9a7d4e6f8b0c2d4e6f8a0b1c
+        apiVersion:
+          type: string
+          title: Apiversion
+          description: The API contract version.
+          examples:
+          - 1.0.0
+        ticketId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ticketid
+          description: The caller's ticketId, echoed; null when not given.
+          examples:
+          - '12345'
+        models:
+          $ref: '#/components/schemas/ModelVersions'
+          description: The model and directory versions that produced the response.
+        taxonomyVersion:
+          type: string
+          title: Taxonomyversion
+          description: The taxonomy the types and intents belong to.
+          examples:
+          - v1-draft
+        detectionKeys:
+          items:
+            $ref: '#/components/schemas/DetectionKey'
+          type: array
+          title: Detectionkeys
+          description: The detection keys.
+        detectionFields:
+          items:
+            $ref: '#/components/schemas/DetectionField'
+          type: array
+          title: Detectionfields
+          description: Every field of a detection.
+        types:
+          items:
+            $ref: '#/components/schemas/TaxonomyEntry'
+          type: array
+          title: Types
+          description: The taxonomy's types.
+        intents:
+          items:
+            $ref: '#/components/schemas/TaxonomyEntry'
+          type: array
+          title: Intents
+          description: The taxonomy's intents.
+        typeSources:
+          items:
+            $ref: '#/components/schemas/Described'
+          type: array
+          title: Typesources
+          description: Every typeSource value, including rule:<name> per keyword rule.
+        intentSources:
+          items:
+            $ref: '#/components/schemas/Described'
+          type: array
+          title: Intentsources
+          description: Every intentSource value.
+      type: object
+      required:
+      - requestId
+      - apiVersion
+      - models
+      - taxonomyVersion
+      - detectionKeys
+      - detectionFields
+      - types
+      - intents
+      - typeSources
+      - intentSources
+      title: CatalogResponse
+      description: 'The response of GET /v1/catalog: every key and enumerated value the responses can contain.'
+    ClassificationResult:
+      properties:
+        primaryType:
+          type: string
+          title: Primarytype
+          description: The taxonomy type id.
+          examples:
+          - access_security
+        typeSource:
+          type: string
+          title: Typesource
+          description: 'Where the type came from: model, alert_name, alert_name_partly, alert_default or rule:<name>.'
+          examples:
+          - rule:access_request
+        typeCandidates:
+          items:
+            $ref: '#/components/schemas/Candidate'
+          type: array
+          title: Typecandidates
+          description: The model's top types, highest first.
+        intent:
+          type: string
+          title: Intent
+          description: The taxonomy intent id.
+          examples:
+          - request_change
+        intentSource:
+          type: string
+          title: Intentsource
+          description: 'Where the intent came from: model or alert_rule.'
+          examples:
+          - model
+        intentCandidates:
+          items:
+            $ref: '#/components/schemas/Candidate'
+          type: array
+          title: Intentcandidates
+          description: The model's top intents, highest first.
+        uncertain:
+          type: boolean
+          title: Uncertain
+          description: True when the model decided the type with low confidence or a close second; check by hand.
+          examples:
+          - false
+        uncertainReason:
+          type: string
+          title: Uncertainreason
+          description: Why it is uncertain; empty otherwise.
+          examples:
+          - ''
+        alert:
+          anyOf:
+          - $ref: '#/components/schemas/AlertInfo'
+          - type: 'null'
+          description: The parsed alert, for alerts; null otherwise.
+        notes:
+          items:
+            type: string
+          type: array
+          title: Notes
+          description: Remarks on the result, such as an alert name the table does not decide.
+          examples:
+          - []
+        debug:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Debug
+          description: 'Only with DEBUG_RESPONSES on a local run: the cleaned text and each rule''s result.'
+      type: object
+      required:
+      - primaryType
+      - typeSource
+      - typeCandidates
+      - intent
+      - intentSource
+      - intentCandidates
+      - uncertain
+      - uncertainReason
+      - alert
+      - notes
+      title: ClassificationResult
+      description: The taxonomy type and intent of one ticket.
+    ClassifyResponse:
+      properties:
+        requestId:
+          type: string
+          title: Requestid
+          description: The request id, also in the X-Request-Id header.
+          examples:
+          - 3f2b8c1e9a7d4e6f8b0c2d4e6f8a0b1c
+        apiVersion:
+          type: string
+          title: Apiversion
+          description: The API contract version.
+          examples:
+          - 1.0.0
+        ticketId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ticketid
+          description: The caller's ticketId, echoed; null when not given.
+          examples:
+          - '12345'
+        models:
+          $ref: '#/components/schemas/ModelVersions'
+          description: The model and directory versions that produced the response.
+        primaryType:
+          type: string
+          title: Primarytype
+          description: The taxonomy type id.
+          examples:
+          - access_security
+        typeSource:
+          type: string
+          title: Typesource
+          description: 'Where the type came from: model, alert_name, alert_name_partly, alert_default or rule:<name>.'
+          examples:
+          - rule:access_request
+        typeCandidates:
+          items:
+            $ref: '#/components/schemas/Candidate'
+          type: array
+          title: Typecandidates
+          description: The model's top types, highest first.
+        intent:
+          type: string
+          title: Intent
+          description: The taxonomy intent id.
+          examples:
+          - request_change
+        intentSource:
+          type: string
+          title: Intentsource
+          description: 'Where the intent came from: model or alert_rule.'
+          examples:
+          - model
+        intentCandidates:
+          items:
+            $ref: '#/components/schemas/Candidate'
+          type: array
+          title: Intentcandidates
+          description: The model's top intents, highest first.
+        uncertain:
+          type: boolean
+          title: Uncertain
+          description: True when the model decided the type with low confidence or a close second; check by hand.
+          examples:
+          - false
+        uncertainReason:
+          type: string
+          title: Uncertainreason
+          description: Why it is uncertain; empty otherwise.
+          examples:
+          - ''
+        alert:
+          anyOf:
+          - $ref: '#/components/schemas/AlertInfo'
+          - type: 'null'
+          description: The parsed alert, for alerts; null otherwise.
+        notes:
+          items:
+            type: string
+          type: array
+          title: Notes
+          description: Remarks on the result, such as an alert name the table does not decide.
+          examples:
+          - []
+        debug:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Debug
+          description: 'Only with DEBUG_RESPONSES on a local run: the cleaned text and each rule''s result.'
+      type: object
+      required:
+      - requestId
+      - apiVersion
+      - models
+      - primaryType
+      - typeSource
+      - typeCandidates
+      - intent
+      - intentSource
+      - intentCandidates
+      - uncertain
+      - uncertainReason
+      - alert
+      - notes
+      title: ClassifyResponse
+      description: The response of POST /v1/classify.
+      examples:
+      - apiVersion: 1.0.0
+        intent: request_change
+        intentCandidates:
+        - id: request_change
+          p: 0.61
+        - id: fix_incident
+          p: 0.2
+        intentSource: model
+        models:
+          directory: '2026-10-19T06:00:00Z'
+          serverDetector: '2026-10-17T15:10:15Z'
+          taxonomyVersion: v1-draft
+          ticketTypes: '2026-10-17T20:53:21Z'
+        notes: []
+        primaryType: access_security
+        requestId: 3f2b8c1e9a7d4e6f8b0c2d4e6f8a0b1c
+        ticketId: '12345'
+        typeCandidates:
+        - id: access_security
+          p: 0.33
+        - id: database_refresh
+          p: 0.12
+        typeSource: rule:access_request
+        uncertain: false
+        uncertainReason: ''
+    ClientInfo:
+      properties:
+        zendeskOrgId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Zendeskorgid
+          description: The organization id the request gave.
+          examples:
+          - '999001'
+        known:
+          type: boolean
+          title: Known
+          description: Whether the directory has known names for that organization.
+          examples:
+          - true
+      type: object
+      required:
+      - zendeskOrgId
+      - known
+      title: ClientInfo
+      description: The client the names were resolved against.
+    Described:
+      properties:
+        value:
+          type: string
+          title: Value
+          description: The value as responses carry it.
+          examples:
+          - known
+        description:
+          type: string
+          title: Description
+          description: What it means.
+          examples:
+          - The client's known names include this host, pair or instance.
+      type: object
+      required:
+      - value
+      - description
+      title: Described
+      description: An enumerated value and its meaning.
+    DetectResponse:
+      properties:
+        requestId:
+          type: string
+          title: Requestid
+          description: The request id, also in the X-Request-Id header.
+          examples:
+          - 3f2b8c1e9a7d4e6f8b0c2d4e6f8a0b1c
+        apiVersion:
+          type: string
+          title: Apiversion
+          description: The API contract version.
+          examples:
+          - 1.0.0
+        ticketId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ticketid
+          description: The caller's ticketId, echoed; null when not given.
+          examples:
+          - '12345'
+        models:
+          $ref: '#/components/schemas/ModelVersions'
+          description: The model and directory versions that produced the response.
+        client:
+          $ref: '#/components/schemas/ClientInfo'
+          description: The organization the request named and whether its names are known.
+        isAlert:
+          type: boolean
+          title: Isalert
+          description: Whether the text is a monitoring alert the parser recognized.
+          examples:
+          - false
+        entities:
+          $ref: '#/components/schemas/Entities'
+          description: Each key's distinct values in order of first appearance.
+        detections:
+          items:
+            $ref: '#/components/schemas/Detection'
+          type: array
+          title: Detections
+          description: One entry per occurrence, in text order (subject first).
+        debug:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Debug
+          description: 'Only with DEBUG_RESPONSES on a local run: every scored candidate.'
+      type: object
+      required:
+      - requestId
+      - apiVersion
+      - models
+      - client
+      - isAlert
+      - entities
+      - detections
+      title: DetectResponse
+      description: The response of POST /v1/detect.
+      examples:
+      - apiVersion: 1.0.0
+        client:
+          known: true
+          zendeskOrgId: '999001'
+        detections:
+        - end: 11
+          environment: Production
+          field: description
+          host: fakesql01
+          hostCandidates: []
+          instance: reports
+          key: instance
+          score: 0.95
+          start: 4
+          status: known
+          text: REPORTS
+          value: reports
+        - end: 33
+          environment: Production
+          field: description
+          host: fakesql01
+          hostCandidates: []
+          key: host
+          score: 1.0
+          start: 24
+          status: known
+          text: FAKESQL01
+          value: fakesql01
+        - end: 79
+          field: description
+          host: fakesql02
+          hostCandidates: []
+          instance: finance
+          key: host_instance
+          score: 1.0
+          start: 62
+          status: known
+          text: FAKESQL02\FINANCE
+          value: fakesql02\finance
+        entities:
+          host:
+          - fakesql01
+          host_instance:
+          - fakesql02\finance
+          instance:
+          - reports
+        isAlert: false
+        models:
+          directory: '2026-10-19T06:00:00Z'
+          serverDetector: '2026-10-17T15:10:15Z'
+          taxonomyVersion: v1-draft
+          ticketTypes: '2026-10-17T20:53:21Z'
+        requestId: 3f2b8c1e9a7d4e6f8b0c2d4e6f8a0b1c
+    Detection:
+      properties:
+        key:
+          type: string
+          title: Key
+          description: 'The entity type: host, instance (a bare instance name) or host_instance.'
+          examples:
+          - host_instance
+        value:
+          type: string
+          title: Value
+          description: 'The name: lower case, without domain or port, corrected when status is typo_of_known; HOST\INSTANCE
+            for host_instance.'
+          examples:
+          - fakesql02\finance
+        text:
+          type: string
+          title: Text
+          description: The name as written, the text at field[start:end].
+          examples:
+          - FAKESQL02\FINANCE
+        host:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Host
+          description: The host; for a bare instance, the host it was paired with, if any.
+          examples:
+          - fakesql02
+        instance:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Instance
+          description: The named instance, if any.
+          examples:
+          - finance
+        status:
+          type: string
+          title: Status
+          description: How the name resolved against the client's known names.
+          examples:
+          - known
+        field:
+          type: string
+          title: Field
+          description: 'Where the name is: subject or description.'
+          examples:
+          - description
+        start:
+          type: integer
+          title: Start
+          description: Start offset in the field, in characters.
+          examples:
+          - 62
+        end:
+          type: integer
+          title: End
+          description: End offset in the field, in characters (exclusive).
+          examples:
+          - 79
+        typoOf:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Typoof
+          description: The known name this one is a typo of (status typo_of_known).
+          examples:
+          - null
+        siblingOf:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Siblingof
+          description: A known name that differs only in trailing digits.
+          examples:
+          - null
+        hostCandidates:
+          items:
+            type: string
+          type: array
+          title: Hostcandidates
+          description: For an ambiguous bare instance, the client's hosts that have it.
+          examples:
+          - []
+        environment:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Environment
+          description: The environment the CMDB or alerts give for the host.
+          examples:
+          - Production
+        score:
+          type: number
+          title: Score
+          description: The detector's score for this name, 0 to 1.
+          examples:
+          - 0.95
+      type: object
+      required:
+      - key
+      - value
+      - text
+      - host
+      - instance
+      - status
+      - field
+      - start
+      - end
+      - typoOf
+      - siblingOf
+      - hostCandidates
+      - environment
+      - score
+      title: Detection
+      description: One occurrence of a server or instance name in the ticket.
+    DetectionField:
+      properties:
+        name:
+          type: string
+          title: Name
+          description: The field name.
+          examples:
+          - status
+        type:
+          type: string
+          title: Type
+          description: 'The JSON type: string, integer, number, boolean or array of string, with ''or null'' when
+            it can be null.'
+          examples:
+          - string
+        description:
+          type: string
+          title: Description
+          description: What the field holds.
+          examples:
+          - How the name resolved against the client's known names.
+        values:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/Described'
+            type: array
+          - type: 'null'
+          title: Values
+          description: For enumerated fields, every value and its meaning.
+      type: object
+      required:
+      - name
+      - type
+      - description
+      - values
+      title: DetectionField
+      description: A field of a detection.
+    DetectionKey:
+      properties:
+        key:
+          type: string
+          title: Key
+          description: The key as responses carry it.
+          examples:
+          - host_instance
+        description:
+          type: string
+          title: Description
+          description: What it means.
+          examples:
+          - 'A HOST\INSTANCE name: a named instance on a given server.'
+      type: object
+      required:
+      - key
+      - description
+      title: DetectionKey
+      description: A detection key (entity type).
+    DetectionResult:
+      properties:
+        client:
+          $ref: '#/components/schemas/ClientInfo'
+          description: The organization the request named and whether its names are known.
+        isAlert:
+          type: boolean
+          title: Isalert
+          description: Whether the text is a monitoring alert the parser recognized.
+          examples:
+          - false
+        entities:
+          $ref: '#/components/schemas/Entities'
+          description: Each key's distinct values in order of first appearance.
+        detections:
+          items:
+            $ref: '#/components/schemas/Detection'
+          type: array
+          title: Detections
+          description: One entry per occurrence, in text order (subject first).
+        debug:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Debug
+          description: 'Only with DEBUG_RESPONSES on a local run: every scored candidate.'
+      type: object
+      required:
+      - client
+      - isAlert
+      - entities
+      - detections
+      title: DetectionResult
+      description: The servers and instances in one ticket.
+    Entities:
+      properties:
+        host:
+          items:
+            type: string
+          type: array
+          title: Host
+          description: Hosts named on their own.
+          examples:
+          - - fakesql01
+        instance:
+          items:
+            type: string
+          type: array
+          title: Instance
+          description: Instances named without their host.
+          examples:
+          - - reports
+        host_instance:
+          items:
+            type: string
+          type: array
+          title: Host Instance
+          description: HOST\INSTANCE names.
+          examples:
+          - - fakesql02\finance
+      type: object
+      required:
+      - host
+      - instance
+      - host_instance
+      title: Entities
+      description: 'The compact key/value view: each key''s distinct values in order of first appearance.'
+    FieldError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Loc
+          description: Where the problem is, such as ['body', 'text'].
+          examples:
+          - - body
+            - text
+        msg:
+          type: string
+          title: Msg
+          description: What is wrong.
+          examples:
+          - Field required
+        type:
+          type: string
+          title: Type
+          description: The error type.
+          examples:
+          - missing
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: FieldError
+      description: One field that failed validation. The rejected value is never repeated.
+    ModelVersions:
+      properties:
+        serverDetector:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Serverdetector
+          description: The server detector model's creation time.
+          examples:
+          - '2026-10-17T15:10:15Z'
+        ticketTypes:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tickettypes
+          description: The taxonomy classifier model's creation time.
+          examples:
+          - '2026-10-17T20:53:21Z'
+        directory:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Directory
+          description: The known-names directory snapshot's creation time, or model:<time> when the model's own
+            directory is in use.
+          examples:
+          - '2026-10-19T06:00:00Z'
+        taxonomyVersion:
+          type: string
+          title: Taxonomyversion
+          description: The taxonomy the type and intent ids belong to.
+          examples:
+          - v1-draft
+        modelVersion:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Modelversion
+          description: The store's model version folder (MODEL_VERSION), when set.
+          examples:
+          - '2026-10-17'
+      type: object
+      required:
+      - serverDetector
+      - ticketTypes
+      - directory
+      - taxonomyVersion
+      - modelVersion
+      title: ModelVersions
+      description: |-
+        The model and directory versions that produced the response. They change with retraining and
+        directory refreshes, without an API change.
+      examples:
+      - directory: '2026-10-19T06:00:00Z'
+        serverDetector: '2026-10-17T15:10:15Z'
+        taxonomyVersion: v1-draft
+        ticketTypes: '2026-10-17T20:53:21Z'
+    Problem:
+      properties:
+        type:
+          type: string
+          title: Type
+          description: Always about:blank; use status and code.
+          default: about:blank
+          examples:
+          - about:blank
+        title:
+          type: string
+          title: Title
+          description: The HTTP status phrase.
+          examples:
+          - Unprocessable Content
+        status:
+          type: integer
+          title: Status
+          description: The HTTP status.
+          examples:
+          - 422
+        detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Detail
+          description: What went wrong, for people.
+          examples:
+          - The request body does not match the schema.
+        code:
+          type: string
+          title: Code
+          description: A stable machine-readable reason.
+          examples:
+          - validation_error
+        requestId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Requestid
+          description: The request id, as in X-Request-Id.
+          examples:
+          - 3f2b8c1e9a7d4e6f8b0c2d4e6f8a0b1c
+        apiVersion:
+          type: string
+          title: Apiversion
+          description: The API contract version.
+          examples:
+          - 1.0.0
+        errors:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/FieldError'
+            type: array
+          - type: 'null'
+          title: Errors
+          description: For 422, each field that failed validation.
+      type: object
+      required:
+      - title
+      - status
+      - code
+      - apiVersion
+      title: Problem
+      description: RFC 9457 problem details (application/problem+json). Never repeats the request's text.
+    Status:
+      properties:
+        status:
+          type: string
+          title: Status
+          description: ok for /health, ready for /ready.
+          examples:
+          - ok
+      type: object
+      required:
+      - status
+      title: Status
+      description: A probe's answer.
+    TaxonomyEntry:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: The id responses carry.
+          examples:
+          - access_security
+        label:
+          type: string
+          title: Label
+          description: A short label.
+          examples:
+          - Access and security
+        definition:
+          type: string
+          title: Definition
+          description: The taxonomy's definition.
+          examples:
+          - Logins, users, roles and permissions.
+      type: object
+      required:
+      - id
+      - label
+      - definition
+      title: TaxonomyEntry
+      description: A taxonomy type or intent from taxonomy.json.
+    TicketRequest:
+      properties:
+        text:
+          type: string
+          maxLength: 200000
+          minLength: 1
+          title: Text
+          description: 'The ticket text: its description or first comment, 1 to 200,000 characters. The detector
+            reads the first 20,000 characters and the classifier the first 8,000.'
+          examples:
+          - FAKESQL01 is down since 06:00.
+        subject:
+          anyOf:
+          - type: string
+            maxLength: 1000
+          - type: 'null'
+          title: Subject
+          description: The ticket subject, up to 1,000 characters. Optional, but alerts and several rules are recognized
+            by it.
+          examples:
+          - Slow reports
+        zendeskOrgId:
+          anyOf:
+          - type: integer
+            minimum: 0.0
+          - type: string
+            pattern: ^\d{1,20}$
+          - type: 'null'
+          title: Zendeskorgid
+          description: The Zendesk organization id of the ticket's client, as a string of digits or an integer.
+            The detector resolves names against that client's known servers and instances only; missing or unknown,
+            no client's names apply. The taxonomy classifier ignores it.
+          examples:
+          - 999001
+        ticketId:
+          anyOf:
+          - type: string
+            maxLength: 256
+          - type: integer
+          - type: 'null'
+          title: Ticketid
+          description: The caller's own ticket id, echoed back for correlation. Not used and not logged.
+          examples:
+          - '12345'
+      additionalProperties: false
+      type: object
+      required:
+      - text
+      title: TicketRequest
+      description: One ticket. Unknown fields are refused, so a misspelt zendeskOrgId is not silently ignored.
+      examples:
+      - subject: Slow reports
+        text: The REPORTS instance on FAKESQL01 is slow since this morning. FAKESQL02\FINANCE is fine.
+        zendeskOrgId: '999001'
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      description: An API key from API_KEYS (AUTH_MODE=api_key).
+      in: header
+      name: X-API-Key
+    EntraBearer:
+      type: http
+      description: An Entra ID access token for the API's app registration, carrying the required app role (AUTH_MODE=entra).
+      scheme: bearer
+      bearerFormat: JWT
+tags:
+- name: analysis
+  description: Server detection and taxonomy classification of one ticket.
+- name: catalog
+  description: The keys and enumerated values responses can contain.
+- name: probes
+  description: Liveness and readiness for the container platform; no auth.
