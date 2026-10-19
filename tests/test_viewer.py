@@ -121,7 +121,7 @@ def test_page_parses_jsonl_and_json_files():
     for key in ("sent_subject", "sent_description", "secrets_masked", "description", "is_alert", "result"):
         assert first[key] == expected[key], key
     assert [t["ticket_id"] for t in parsed[1]["tickets"]] == ["5"]
-    assert "load_export.py" in parsed[2]["error"]
+    assert "python -m tools.load_export" in parsed[2]["error"]
 
 
 def test_detected_servers_reach_the_page_and_have_a_card():
