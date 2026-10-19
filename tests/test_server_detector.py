@@ -388,6 +388,17 @@ def rules_only_model():
     ("listener on orafake6:1521 is down", {"orafake6": ("host", "host:port")}),
     ("exporter fakemaria2:9104 is not scraping", {"fakemaria2": ("host", "host:port")}),
     ("Open webfake3:8080 now", {}),  # a web port is not a database server
+    ("Connect with SID=ORAFAKE1 please", {"ORAFAKE1": ("bare_instance", "instance:oracle")}),
+    ("export ORACLE_SID=finfake2", {"finfake2": ("bare_instance", "instance:oracle")}),
+    ("(ADDRESS=(PROTOCOL=TCP)(HOST=orafake7)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME = salespdb.corp.local))",
+     {"orafake7": ("host", "host:after_server_word"), "salespdb.corp.local": ("bare_instance", "instance:oracle")}),
+    ("sqlplus scott@orafake8:1521/FINPDB", {"orafake8": ("host", "host:port"), "FINPDB": ("bare_instance", "instance:oracle")}),
+    ("jdbc:oracle:thin:@orafake9:1521:ORCLX", {"orafake9": ("host", "host:port"), "ORCLX": ("bare_instance", "instance:oracle")}),
+    ("The Oracle SID PRODFIN1 is down", {"PRODFIN1": ("bare_instance", "instance:oracle")}),
+    ("Oracle: the HRPRD database will not open", {"HRPRD": ("bare_instance", "instance:oracle")}),
+    ("The SID PRODFIN1 is down", {}),  # prose counts only in a ticket that mentions Oracle
+    ("SQL Server: the SALESDB database is full", {}),
+    ("Oracle login failed for Windows SID S-1-5-21-1004", {}),
     ("Failover on instance db01.corp.local today", {"db01.corp.local": ("host", "host:after_server_word")}),
     (r"Data Source=fakesql02\SALES,1433;", {r"fakesql02\SALES,1433": ("host_instance", "host:host_instance")}),
     ("Server=dbfake;Database=x", {"dbfake": ("host", "host:connection_string")}),

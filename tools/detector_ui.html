@@ -473,6 +473,7 @@
             <div class="layer-head"><h3>Rules</h3><span class="chip">score at least 0.95</span></div>
             <div class="rule-grid">
               <div><code>instance:service_suffix</code> MSSQL$NAME, SQLAgent$NAME</div>
+              <div><code>instance:oracle</code> SID=, SERVICE_NAME=, host:1521/NAME, @host:1521:NAME; SID or PDB NAME when Oracle is mentioned</div>
               <div><code>instance:name_before_instance</code> NAME instance</div>
               <div><code>instance:name_after_instance</code> instance (named) NAME</div>
               <div><code>host:host_instance</code> HOST\INSTANCE, host has a digit or is known</div>
@@ -582,7 +583,7 @@
 
   // Rule names from server_detector._rule, in words. A rule match scores at least 0.95.
   const RULE_TEXT = {
-    "instance:service_suffix": "rule: MSSQL$/SQLAgent$ service name", "instance:name_before_instance": "rule: <name> instance",
+    "instance:service_suffix": "rule: MSSQL$/SQLAgent$ service name", "instance:oracle": "rule: Oracle SID or service name","instance:name_before_instance": "rule: <name> instance",
     "instance:name_after_instance": "rule: instance <name>", "instance:known_name": "rule: client's known instance",
     "host:dictionary": "dictionary: client's confirmed host", "instance:dictionary": "dictionary: client's confirmed instance",
     "host:known_name": "rule: client's known host", "host:near_known_name": "rule: close to a known host",

@@ -46,8 +46,9 @@ DEFAULT_INSTANCE = "mssqlserver"  # stored as a host-level record, as match_ment
 TOKEN_RE = re.compile(r"[A-Za-z0-9_\\.\-,:$#]+")
 SENTENCE_RE = re.compile(r"[.!?](?=\s)|\n")
 # The value ends at ; or a quote, as in a connection string, or at whitespace, since server names have
-# none: "Server=sql01,1433 is down" in prose marks sql01,1433 only, not the rest of the line.
-CONN_RE = re.compile(r"(?i)\b(?:server|data\s+source|address|addr|network\s+address)\s*=\s*([^;'\"\s]+)")
+# none: "Server=sql01,1433 is down" in prose marks sql01,1433 only, not the rest of the line. It also
+# ends at a parenthesis, so an Oracle TNS descriptor's ADDRESS=(PROTOCOL=TCP)(HOST=...) is not one value.
+CONN_RE = re.compile(r"(?i)\b(?:server|data\s+source|address|addr|network\s+address)\s*=\s*([^;'\"\s()]+)")
 SERVICE_RE = re.compile(r"(?i)^(mssql|sqlagent|sqlserveragent|reportserver|mssqlfdlauncher|sqltelemetry|msolap|"
                         r"mssqlserverolapservice|sqlwriter)\$([A-Za-z0-9_#\-]+)$")
 IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
@@ -671,6 +672,10 @@ def token_parts(raw: str, start: int) -> list[tuple[int, int, frozenset]]:
         m = re.fullmatch(r"([^:]+):(\d{2,5})", raw)
         if m:
             return [(start, start + len(m.group(1)), frozenset({"port"}))]
+        m = re.fullmatch(r"([^:]+):(\d{2,5}):([A-Za-z][A-Za-z0-9_$#]*)", raw)  # JDBC thin @host:1521:SID
+        if m:
+            return [(start, start + len(m.group(1)), frozenset({"port"})),
+                    (start + m.start(3), start + len(raw), frozenset({"oracle"}))]
         return _split(raw, start, ":")
     if "," in raw:
         if re.fullmatch(r"[^,]+,\d{2,5}", raw):
@@ -722,6 +727,7 @@ def ticket_candidates(ticket: dict, know: Knowledge, *, alert_context: str = "st
     words = [t[0].lower() for t in tokens]
     breaks = [m.start() for m in SENTENCE_RE.finditer(text)]
     conn = [m.span(1) for m in CONN_RE.finditer(text)]
+    oracle_ticket = bool(ORACLE_RE.search(text))
     client = know.directory.client_for(ticket)
     # The servers an alert names in its own parsed fields (Server, Host(s), ServerName and the like)
     alert_hosts = frozenset(p.host for p in ticket_names({"alert_fields": ticket.get("alert_fields")})) \
@@ -737,7 +743,7 @@ def ticket_candidates(ticket: dict, know: Knowledge, *, alert_context: str = "st
         window_cue = any(w in INSTANCE_CUES or w.startswith(SERVICE_PREFIXES) for w in window)
         host_cue = _after_host_word(*_previous_words(words, ti))
         for s, e, flags in parts:
-            c = _candidate(text, s, e, flags, know, window_cue, conn, client, host_cue)
+            c = _candidate(text, s, e, flags, know, window_cue, conn, client, host_cue, oracle_ticket)
             if not c:
                 continue
             c.update(ti=ti, sent=bisect.bisect_left(breaks, s), ctx=" ".join(window))
@@ -749,7 +755,7 @@ def ticket_candidates(ticket: dict, know: Knowledge, *, alert_context: str = "st
 
 
 def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, window_cue: bool, conn,
-               client: str | None = None, host_cue: bool = False) -> dict | None:
+               client: str | None = None, host_cue: bool = False, oracle_ticket: bool = False) -> dict | None:
     part = text[s:e]
     parsed = parse_server_name(part)
     if not parsed:
@@ -767,10 +773,15 @@ def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, win
             return None
         return {**base, "kind": "host_instance", "host": host, "instance": instance, "name": f"{host}\\{instance}",
                 "host_ok": True, "inst_ok": False, "cue": window_cue}
+    if _oracle_name(text, s, e, flags, know, oracle_ticket):
+        # An Oracle SID or service name (a service name may be dotted): an instance, never a host
+        return {**base, "kind": "token", "host": host, "instance": None, "name": host,
+                "host_ok": False, "inst_ok": True, "cue": True, "oracle": True}
     head = part.split(",")[0]
     dotted = "." in head and not base["is_ip"]
     is_file = dotted and head.rsplit(".", 1)[-1].lower() in FILE_EXTS
-    email = text[e:e + 1] == "@" or text[max(0, s - 1):s] == "@"
+    # user@host:1521 (EZConnect, JDBC) is a host with a port, not an email address
+    email = (text[e:e + 1] == "@" or text[max(0, s - 1):s] == "@") and "port" not in flags
     strong = in_conn or in_unc or base["has_port"]
     # A confirmed host of the client stays a candidate even when it is a frequent word, if it has a digit
     # or punctuation or follows a server word (so prose mentions of a word-like name do not become noisy
@@ -787,6 +798,37 @@ def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, win
         return None
     return {**base, "kind": "token", "host": host, "instance": None, "name": host,
             "host_ok": host_ok, "inst_ok": inst_ok, "cue": cue}
+
+
+# Oracle SIDs and service names. Oracle syntax always counts: SID= or SID:, SERVICE_NAME, ORACLE_SID,
+# GLOBAL_NAME, DB_UNIQUE_NAME, a TNS (SID = X), EZConnect host:1521/SERVICE and JDBC @host:1521:SID.
+# Prose ("SID ORCL", "service name PRODCDB", "PDB SALESPDB", "the ORCLPRD database") counts only in a
+# ticket that mentions Oracle, for an upper-case name that is not a frequent word.
+ORACLE_RE = re.compile(r"(?i)oracle")
+ORACLE_KEY_RE = re.compile(r"(?i)(?:\b(?:oracle_sid|sid|service_name|global_name|db_unique_name)\s*[=:]\s*\(?\s*"
+                           r"|:(?:1521|1522|1526|2484)/)$")
+ORACLE_BEFORE_RE = re.compile(r"(?i)\b(?:sid|service\s+name|[pc]db|pluggable\s+database|container\s+database"
+                              r"|database|db)\s+$")
+ORACLE_AFTER_RE = re.compile(r"(?i)^\s+(?:database|db|[pc]db|sid)\b")
+ORACLE_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]{0,29}(?:\.[A-Za-z0-9_\-]+){0,5}$")
+NOT_ORACLE = frozenset({"oracle", "mssqlserver", "sqlserveragent", "sql", "mysql", "rac", "asm", "rman", "dba",
+                        "tns", "sid", "pdb", "cdb", "db", "none", "null", "unknown"})
+
+
+def _oracle_name(text: str, s: int, e: int, flags: frozenset, know: Knowledge, oracle_ticket: bool) -> bool:
+    """True when text[s:e] is written as an Oracle SID or service name (see ORACLE_KEY_RE)."""
+    part = text[s:e]
+    if not ORACLE_NAME_RE.match(part) or part.lower() in NOT_ORACLE or SERVICE_RE.match(part):
+        return False
+    if "oracle" in flags:
+        return True
+    before = text[text.rfind("\n", 0, s) + 1:s]
+    if ORACLE_KEY_RE.search(before):
+        return True
+    end = text.find("\n", e)
+    after = text[e:] if end < 0 else text[e:end]
+    return (oracle_ticket and part == part.upper() and len(part) >= 3 and part.lower() not in know.stop
+            and bool(ORACLE_BEFORE_RE.search(before) or ORACLE_AFTER_RE.match(after)))
 
 
 # Colon ports that mark a database server: SQL Server, MySQL and MariaDB, PostgreSQL, Oracle, MongoDB,
@@ -820,7 +862,7 @@ def _after_host_word(prev1: str, prev2: str) -> bool:
 
 def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | None = None) -> str | None:
     """The name of the rule that marks this candidate as a host or an instance, or None. Instance
-    rules: an MSSQL$ or SQLAgent$ service suffix, '<name> instance', 'instance <name>' and 'instance
+    rules: an Oracle SID or service name (see _oracle_name), an MSSQL$ or SQLAgent$ service suffix, '<name> instance', 'instance <name>' and 'instance
     named <name>'. Host rules: HOST\\INSTANCE whose host has a digit, is known or is in a connection
     string; a connection-string value; a UNC host; a name with a port or tcp:; and a name with a
     digit after server, host, vm and the like, or after 'instance on'. Alert template lines
@@ -851,6 +893,8 @@ def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | Non
     own_hosts = know.profile(client, "host").names
     if c["kind"] == "token" and c["host_ok"] and has_digit and name in own_hosts:
         return "host:known_name"
+    if c.get("oracle"):
+        return "instance:oracle"
     if c["inst_ok"] and c["kind"] == "token" and name not in FILLER_WORDS:
         if name in dict_instances and c["cue"] and not c["after_label"]:
             return "instance:dictionary"
