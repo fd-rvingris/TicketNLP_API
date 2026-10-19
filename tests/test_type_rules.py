@@ -64,6 +64,21 @@ def test_access_request_leaves_staff_collector_and_other_work_to_their_types():
     assert tr.access_request("", f"{text}; run the attached script.") is None
 
 
+def test_ha_terms_fire_on_availability_group_replication_and_failover_subjects():
+    for subject in ("Remove AWS nodes from Production AGs to facilitate isolated testing", "AG latency on FAKESQL01",
+                    "Add database to availability group", "AlwaysOn health", "Replication agent failing",
+                    "Log shipping restore behind", "Data Guard gap on FAKEORA1", "Planned failover tonight",
+                    "FAKESQL02 failed over"):
+        assert tr.ha_terms(subject, "") == "replication_ha_dr", subject
+
+
+def test_ha_terms_leave_patching_lower_case_ag_and_other_wording_to_the_model():
+    for subject in ("Patch AG nodes with failover", "CU14 on the AG replicas", "Upgrade the availability group",
+                    "Agenda for the ag meeting", "Read replica is slow", "Production disk full", "Mirror the drive"):
+        assert tr.ha_terms(subject, "") is None, subject
+    assert tr.ha_terms("Help", "The AG is unhealthy") is None  # the subject decides
+
+
 def test_apply_rules_returns_the_first_rule_that_fires():
     assert tr.apply_rules("[Log on to FAKESQL01]", "grant read access to the user") == ("staff_access", "staff_logon")
     assert tr.apply_rules("", "grant read access to the user") == ("access_security", "access_request")

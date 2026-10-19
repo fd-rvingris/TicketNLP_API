@@ -325,7 +325,7 @@ def test_debug_responses_add_candidates_and_rule_checks_locally(tmp_path):
     cand = j["detection"]["debug"]["candidates"]
     assert cand and {"pHost", "pInstance", "rule", "hostCandidate"} <= set(cand[0])
     assert {r["rule"] for r in j["taxonomy"]["debug"]["rules"]} == {"staff_logon", "validation_results", "sip_review",
-                                                                   "database_refresh", "access_request"}
+                                                                   "database_refresh", "access_request", "ha_terms"}
     assert "cleanedText" in j["taxonomy"]["debug"]
 
 
