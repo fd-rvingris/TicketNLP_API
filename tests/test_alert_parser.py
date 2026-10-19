@@ -1,4 +1,4 @@
-from alert_parser import alert_family, parse_alert
+from ticket_analysis.alert_parser import alert_family, parse_alert
 from common import make_ticket
 
 COLLECTOR = """AlertId 123456
@@ -99,7 +99,7 @@ def test_table_layout_fields():
 
 
 def test_table_spans_mark_each_value_where_it_is():
-    from alert_parser import table_spans
+    from ticket_analysis.alert_parser import table_spans
     text = ("CAUTION: This email originated from outside of the organization.\r\n\r\n\r\n"
             "Client Name Environment Name Server Alert Type Open Date (UTC) Message\r\n"
             "FAKEHOLD - Fake Music (203) Default (FAK-LA01-WIS1)   No recent monitoring runs "
@@ -172,7 +172,7 @@ def test_backup_report_availability_group_variant_has_a_server_column():
 
 
 def test_backup_spans_point_at_values():
-    from alert_parser import backup_spans
+    from ticket_analysis.alert_parser import backup_spans
     spans = backup_spans("Backup Exception Report from server FAKESQL01", BACKUP)
     subject = [s for s in spans if s.get("in") == "subject"]
     assert [("Backup Exception Report from server FAKESQL01"[s["start"]:s["end"]]) for s in subject] == ["FAKESQL01"]

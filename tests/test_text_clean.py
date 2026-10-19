@@ -1,6 +1,6 @@
 """Email boilerplate cleaning tests. All names and text are made up."""
 
-from text_clean import PATTERNS, clean_text, protected, removed_chars
+from ticket_analysis.text_clean import PATTERNS, clean_text, protected, removed_chars
 
 BANNER = ("CAUTION: This email originated from outside of the organization. Do not click links or open "
           "attachments unless you recognize the sender and know the content is safe.")

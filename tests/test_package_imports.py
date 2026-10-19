@@ -6,7 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 BLOCKED = ("anthropic", "dotenv", "requests", "tools")
-EXPECTED = {"paths", "jsonl", "tickets", "masking", "names", "taxonomy"}
+EXPECTED = {"paths", "jsonl", "tickets", "masking", "names", "taxonomy", "alert_parser", "type_rules", "text_clean"}
 
 
 def package_modules() -> list[str]:
@@ -37,3 +37,15 @@ def test_paths_point_at_the_repository():
 def test_taxonomy_file_ships_with_the_package():
     from ticket_analysis.taxonomy import TAXONOMY_PATH
     assert TAXONOMY_PATH.parent.name == "ticket_analysis" and TAXONOMY_PATH.exists()
+
+
+def test_parsing_and_cleaning_run_without_the_tools():
+    code = ("import sys\n"
+            f"for name in {BLOCKED!r}:\n"
+            "    sys.modules[name] = None\n"
+            "from ticket_analysis.tickets import make_ticket\n"
+            "from ticket_analysis.text_clean import clean_text\n"
+            "t = make_ticket('1', '[FIRING:1] Made Up Alert', 'Hello,\\nserver FAKESQL01 is down.\\nThanks')\n"
+            "print(clean_text(t['subject'], t['description'])[1])\n")
+    out = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr

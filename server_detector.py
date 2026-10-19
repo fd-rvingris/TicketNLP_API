@@ -35,7 +35,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from sklearn.preprocessing import MaxAbsScaler
 
-from alert_parser import COLLECTOR_LABELS, FIRING_LABELS, SERVER_FIELDS
+from ticket_analysis.alert_parser import COLLECTOR_LABELS, FIRING_LABELS, SERVER_FIELDS
 from common import (DATA_DIR, INSTANCES_PATH, REPORTS_DIR, ParsedName, fmt_pct, md_table, now_iso,
                     parse_server_name, read_jsonl, write_jsonl)
 

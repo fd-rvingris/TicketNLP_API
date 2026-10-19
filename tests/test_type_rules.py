@@ -1,6 +1,6 @@
 """Keyword rule tests. All names and text are made up."""
 
-import type_rules as tr
+import ticket_analysis.type_rules as tr
 
 
 def test_staff_logon():

@@ -21,12 +21,12 @@ from pathlib import Path
 
 import joblib
 
-from alert_parser import parse_alert
+from ticket_analysis.alert_parser import parse_alert
 from baseline import build_model, features, read_labels
 from common import DATA_DIR, now_iso, read_jsonl
 from schema import TAXONOMY, TAXONOMY_VERSION
-from text_clean import clean_text
-from type_rules import apply_rules
+from ticket_analysis.text_clean import clean_text
+from ticket_analysis.type_rules import apply_rules
 
 RETURNED_DIR = DATA_DIR / "claude_pack" / "returned"
 NOTES_PATH = RETURNED_DIR / "taxonomy_notes.md"

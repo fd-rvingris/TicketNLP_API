@@ -22,7 +22,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from alert_parser import COLLECTOR_LABELS, FIRING_LABELS, parse_alert
+from ticket_analysis.alert_parser import COLLECTOR_LABELS, FIRING_LABELS, parse_alert
 from common import DATA_DIR, REPORTS_DIR, md_table, read_jsonl
 from server_detector import BUILTIN_STOP, compress, is_alert_ticket, ticket_names
 

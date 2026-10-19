@@ -29,7 +29,7 @@ import requests
 import server_detector as sd
 import server_labels as sl
 import ticket_types as tt
-from alert_parser import alert_spans, parse_alert
+from ticket_analysis.alert_parser import alert_spans, parse_alert
 from common import DATA_DIR, ZendeskClient, load_env, make_ticket, now_iso, read_jsonl
 
 PAGE_PATH = Path(__file__).parent / "detector_ui.html"

@@ -3,7 +3,8 @@ the inventory), with every field value and every span checked."""
 
 import pytest
 
-from alert_parser import LAYOUTS, SERVER_FIELDS, alert_spans, coverage, match_layout, parse_alert, span_value
+from ticket_analysis.alert_parser import LAYOUTS, SERVER_FIELDS, alert_spans, match_layout, parse_alert, span_value
+from tools.alert_parser import coverage
 from server_detector import ticket_names
 from tests.test_alert_parser import BACKUP, TABLE
 

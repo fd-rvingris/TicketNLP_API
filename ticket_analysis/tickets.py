@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from alert_parser import parse_alert
+from .alert_parser import parse_alert
 
 
 def _flag(value) -> bool | None:

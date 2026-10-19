@@ -21,8 +21,8 @@ from sklearn.model_selection import StratifiedKFold, cross_val_predict, train_te
 from sklearn.pipeline import Pipeline
 
 from common import DATA_DIR, REPORTS_DIR, fmt_pct, md_table, now_iso, read_jsonl
-from text_clean import clean_text
-from type_rules import RULES, apply_rules
+from ticket_analysis.text_clean import clean_text
+from ticket_analysis.type_rules import RULES, apply_rules
 
 OTHER = "(merged rare)"  # not "Other", which is a real Zendesk category
 DEFAULT_TARGETS = ["zendesk_type", "category"]
