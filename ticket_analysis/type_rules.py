@@ -59,6 +59,30 @@ def sip_review(subject: str, text: str) -> str | None:
     return hits.pop() if len(hits) == 1 else None
 
 
+# --- database_refresh: a subject that names a database refresh ---------------------------------
+
+_REFRESH = r"\brefresh(?:es|ed|ing)?\b"
+_DB_REFRESH = re.compile(r"(?i)\b(?:database|db)s?" + _H + r"+" + _REFRESH)
+# Looser wording: refresh of a named database, or refresh from or to an environment
+_REFRESH_DB = re.compile(r"(?i)" + _REFRESH + r"(?:" + _H + r"+(?:of|the|a|an))*(?:" + _H + r"+\S+){0,2}?" + _H
+                         + r"+(?:database|db)s?\b"
+                         r"|" + _REFRESH + r"[^\n]{0,60}\b(?:from|to)" + _H
+                         + r"+(?:prod\w*|pre-?prod\w*|dev\w*|test|qa|uat|stag\w*|sandbox)\b")
+# Refreshes that are not copying a database
+_NOT_DB = re.compile(r"(?i)\b(?:stat(?:istic)?s|reports?|cache|tokens?|views?|cubes?|ssas|power" + _H
+                     + r"*bi|dashboards?|pages?|credentials?|passwords?)\b")
+
+
+def database_refresh(subject: str, text: str) -> str | None:
+    """A Database refresh or DB refresh subject, or one that refreshes a named database or refreshes
+    from or to an environment (not statistics, reports, caches, cubes or tokens)."""
+    if _DB_REFRESH.search(subject):
+        return "database_refresh"
+    if _REFRESH_DB.search(subject) and not _NOT_DB.search(subject):
+        return "database_refresh"
+    return None
+
+
 # --- access_request: database access for client people, service accounts and applications ---
 
 _ACCESS = re.compile(
@@ -99,7 +123,7 @@ def access_request(subject: str, text: str) -> str | None:
 
 
 RULES = [("staff_logon", staff_logon), ("validation_results", validation_results), ("sip_review", sip_review),
-         ("access_request", access_request)]
+         ("database_refresh", database_refresh), ("access_request", access_request)]
 
 
 def apply_rules(subject: str, text: str, rules=RULES) -> tuple[str, str] | None:

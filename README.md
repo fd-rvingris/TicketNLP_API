@@ -406,7 +406,8 @@ with `ticket_analysis/ticket_types.py`: a parsed alert takes its type from the a
 table in data/claude_pack/returned/taxonomy_notes.md (and intent
 fix_incident, or provide_information when it says the condition cleared);
 anything else goes to the keyword rules in `ticket_analysis/type_rules.py` (a [Log on to ...]
-task, a Validation Results report, a single-area SIP review, a client access
+task, a Validation Results report, a single-area SIP review, a database refresh
+subject (not yet measured against the labels), a client access
 request), which read the text with email boilerplate removed, and then to
 TF-IDF and logistic regression trained on Claude's 600 sample labels. A model
 type below 30% probability, or within 5 points of the second, is marked

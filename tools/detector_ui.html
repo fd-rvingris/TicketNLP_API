@@ -226,6 +226,7 @@
                 <tr><td><code>staff_logon</code></td><td>A <code>[Log on to ...]</code> or <code>[Change Password for ...]</code> subject</td><td>staff_access</td><td class="num">39</td><td class="num">100%</td></tr>
                 <tr><td><code>validation_results</code></td><td>A Validation Results report subject</td><td>outage_availability</td><td class="num">16</td><td class="num">100%</td></tr>
                 <tr><td><code>sip_review</code></td><td>A SIP review subject naming one area (Security Audit, Index and Performance, Capacity, DR/HA, Database Maintenance, patching)</td><td>that area's type</td><td class="num">21</td><td class="num">100%</td></tr>
+                <tr><td><code>database_refresh</code></td><td>A Database refresh or DB refresh subject, or one that refreshes a named database or refreshes from or to an environment (not statistics, reports, caches, cubes or tokens)</td><td>database_refresh</td><td class="num">n/a</td><td class="num">not measured</td></tr>
                 <tr><td><code>access_request</code></td><td>Grant, read, write or access wording (READ access, grant, db_datareader, add the login, permission to) plus a login, user, role, schema or service account; not for our own accounts, our collector, change tickets, releases, supplied scripts, or a refresh or restore into another environment</td><td>access_security</td><td class="num">11</td><td class="num">91%</td></tr>
               </tbody>
             </table></div>
@@ -1153,6 +1154,7 @@
     "rule:staff_logon": "keyword rule: a [Log on to ...] or [Change Password for ...] task is staff_access",
     "rule:validation_results": "keyword rule: Validation Results reports are always outage_availability",
     "rule:sip_review": "keyword rule: a SIP review of one area takes that area's type",
+    "rule:database_refresh": "keyword rule: a subject that names a database refresh",
     "rule:access_request": "keyword rule: an access or grant request for a client login, user, role or schema",
   };
   const sourceText = s => SOURCE_TEXT[s] || (s.startsWith("rule:") ? `keyword rule ${s.slice(5)}` : s);
