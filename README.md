@@ -12,6 +12,7 @@ LLM, and an LLM classifier path measures what a single Claude call can do.
 | Folder | Holds |
 | --- | --- |
 | ticket_analysis/ | What the API ships: alert parsing, secret masking, text cleaning, server detection, type classification and the taxonomy. It never imports from tools/, and requirements.txt is all it needs. |
+| api/ | The ticket analysis API (FastAPI and MCP) over the package: the service layer, auth, directory snapshots and the refresh job. It imports only ticket_analysis; its image installs only requirements-api.txt. See docs/api.md. |
 | tools/ | Data loading, the LLM run workflow, training, evaluation, labeling and the review pages. Run each as `python -m tools.<name>` from the repository root. |
 | prompts/ | LLM prompt versions. |
 | docs/ | Design notes, build prompts and export queries. |
@@ -40,12 +41,13 @@ LLM, and an LLM classifier path measures what a single Claude call can do.
     cd C:\src\ticket-classifier-poc
     C:\Python314\python.exe -m venv .venv
     .\.venv\Scripts\Activate.ps1
-    pip install -r requirements-tools.txt  # the package, the tools and pytest
+    pip install -r requirements-tools.txt  # the package, the API, the tools and pytest
     Copy-Item .env.example .env            # then fill in the values
     python -m pytest                       # unit tests; no network access
 
-requirements.txt alone is what the ticket_analysis package needs; the tools
-also need requirements-tools.txt.
+requirements.txt alone is what the ticket_analysis package needs;
+requirements-api.txt adds the API (the image installs only that file), and
+requirements-tools.txt adds the tools and tests on top.
 
 `.env` values:
 
@@ -54,6 +56,25 @@ also need requirements-tools.txt.
 | ANTHROPIC_API_KEY | Anthropic API key (a workspace with a spend limit) |
 | ZENDESK_SUBDOMAIN | e.g. fortifieddata |
 | ZENDESK_EMAIL / ZENDESK_API_TOKEN | Agent email and API token; the code only issues GET requests |
+
+## Ticket analysis API
+
+    python -m api --local                  # http://127.0.0.1:8000/docs, local models, no auth
+    python -m api --local --auth api_key   # with API_KEYS from .env
+    python -m api.mcp_server               # the MCP tools over stdio
+    python -m api.refresh_directory --local   # a known-names snapshot from data/instances.csv
+    python -m api.export_openapi           # regenerate docs/openapi.yaml
+    python -m tools.directory_effect       # detection with a snapshot against the model's directory
+    docker compose up --build              # the Azure image with data/ mounted read-only
+
+`POST /v1/detect`, `/v1/classify` and `/v1/analyze` take one ticket's text
+(optional subject and Zendesk organization id) and return the detected
+servers and instances, the taxonomy type and intent, or both; `GET
+/v1/catalog` lists every key and value they can contain. The same operations
+are MCP tools at `/mcp`. The contract is docs/openapi.yaml; settings, local
+runs and the directory snapshots are in docs/api.md, the Azure Container Apps
+deployment in docs/azure-deploy.md, and example requests in
+docs/api-examples.http and docs/api-examples.ps1.
 
 ## Inputs
 
@@ -87,6 +108,7 @@ also need requirements-tools.txt.
     python -m tools.claude_pack labels                   # server-labeling batches for a Claude chat (docs/claude-labeling-prompt.md)
     python -m tools.claude_pack taxonomy                 # digest of all tickets for a taxonomy chat (docs/claude-taxonomy-prompt.md)
     python -m tools.claude_pack import-labels data\claude_pack\returned\labels_*.jsonl
+    .\tools\claude_relabel.ps1                           # relabel Claude's server-name label sets with the Claude Code CLI
     python -m tools.claude_pack types                    # a round of type-labeling batches for Claude Desktop (see Labeling)
     python -m tools.claude_pack import-types data\claude_pack\returned\types_round_001_*.jsonl
 
@@ -398,6 +420,15 @@ probabilities. Changing a threshold re-scores the current text without
 fetching it again. The How it works tab (`#how`) walks through the layers
 (tokenizing, candidate filter, dictionary pass, rules, model, resolution)
 with a made-up example ticket and the dictionary pass's holdout results.
+The Alert labels tab (`#alert-labels`) lists the alert tickets in Claude's
+span labels (data/labels/claude_spans.jsonl on data/test_tickets.jsonl; set
+with --check-labels and --check-tickets), with each label's status, notes and
+span count against the saved model's detections. Opening one shows the
+ticket with its detections, the labeled spans, and whether each detection
+overlaps a labeled span, for checking whether a detection the label does not
+cover is wrong or the label missed the server. Secrets are masked character
+for character, and the stored alert fields are used, so the detections match
+`python -m tools.server_labels evaluate`.
 The Taxonomy tab (`#taxonomy`) lists the types and intents with their
 definitions, Claude's sample label counts, the alert tickets the alert-name
 table maps to each type, and the rules for choosing the primary type. The
@@ -477,7 +508,10 @@ MSSQLSERVER counts as the host alone.
 and data/instances.csv when present. Names from alert fields and the CMDB
 export are also kept as confirmed, with their environment; dw_servers names
 are known but not confirmed. `CmdbApiDirectory` is a stub that raises
-NotImplementedError and documents the expected API shape.
+NotImplementedError and documents the expected API shape. The API does not
+use the directory saved in the model file: it serves versioned snapshots
+built from the Keystone CMDB and the model's alert names (api/directory.py,
+docs/api.md).
 
 ## Labeling
 
@@ -487,6 +521,33 @@ notes. Fill them in Excel using the ids in ticket_analysis/taxonomy.json, and cl
 before the next run. The next `python -m tools.report` run computes accuracy, a confusion
 matrix, and per-class precision and recall. Existing human entries are never
 overwritten. Reports are written to data/reports/.
+
+### Server-name labels from the Claude Code CLI
+
+    .\tools\claude_relabel.ps1 -Limit 1   # one batch, to try it
+    .\tools\claude_relabel.ps1            # every remaining batch, then import and score
+
+Claude's span labels (data/labels/claude_spans.jsonl on the test file and
+claude_spans_holdout.jsonl on the training holdout) cover database servers of
+every engine: SQL Server, MySQL and MariaDB, PostgreSQL, Oracle, MongoDB and
+cloud databases, with the Windows or Linux servers they run on. Oracle SIDs and
+service names count as bare instances; MySQL, PostgreSQL and MongoDB have
+hosts only. The prompt is docs/claude-labeling-prompt.md. The first labels
+covered SQL Server only; they are kept as `*_sqlserver_only.jsonl`.
+
+`tools/claude_relabel.ps1` labels the same tickets again without Claude
+Desktop. It writes batches with `python -m tools.claude_pack labels
+--from-labels`, sends each batch to `claude -p` with the prompt as the system
+prompt, and checks each reply with `claude_pack check-reply` (every ticket
+exactly once, valid JSONL), retrying up to three times. Each call is a new
+session with no tools, MCP servers, settings or saved history, so no context
+carries over between batches. Finished batches are kept under
+data/claude_pack/relabel/, so a rerun resumes. When all batches of a set are
+done it backs up the old label file once, replaces it with the new labels and
+runs `python -m tools.server_labels evaluate`. Options: -Set test|holdout|all,
+-Model (default claude-opus-5-5), -Effort, -MaxAttempts, -Limit, -Fresh (new
+batches, earlier replies discarded). Ticket text is masked as for Claude
+Desktop and sent to Claude under your Claude Code login.
 
 ### More type labels from Claude Desktop
 
