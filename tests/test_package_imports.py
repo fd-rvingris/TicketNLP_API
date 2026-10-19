@@ -7,7 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 BLOCKED = ("anthropic", "dotenv", "requests", "tools")
 EXPECTED = {"paths", "jsonl", "tickets", "masking", "names", "taxonomy", "alert_parser", "type_rules", "text_clean",
-            "ticket_types"}
+            "server_detector", "ticket_types"}
 
 
 def package_modules() -> list[str]:

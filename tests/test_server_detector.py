@@ -4,7 +4,8 @@ import random
 
 import pytest
 
-import server_detector as sd
+import ticket_analysis.server_detector as sd
+import tools.server_detector as sdt
 from common import make_ticket
 
 
@@ -274,24 +275,24 @@ def synthetic_tickets(n=120, seed=1):
 def test_grouped_holdouts_remove_names_from_training_and_directory():
     tickets = synthetic_tickets()
     d = sd.LocalServerDirectory.from_sources(tickets, None)
-    held_hosts = sd.holdout_names(d.hosts(), 0.2, seed=3)
-    held_inst = sd.holdout_names(d.instance_names(), 0.34, seed=3)
+    held_hosts = sdt.holdout_names(d.hosts(), 0.2, seed=3)
+    held_inst = sdt.holdout_names(d.instance_names(), 0.34, seed=3)
     assert held_hosts and held_inst
     dh, di = d.without(hosts=held_hosts), d.without(instances=held_inst)
     assert not held_hosts & set(dh.hosts()) and not {h for h, _ in dh.instances()} & held_hosts
     assert not held_inst & set(di.instance_names())
-    ex_h, _ = sd.make_examples(tickets, sd.Knowledge(dh, sd.BUILTIN_STOP), dh, alert_context="strip_labels",
+    ex_h, _ = sdt.make_examples(tickets, sd.Knowledge(dh, sd.BUILTIN_STOP), dh, alert_context="strip_labels",
                                exclude_hosts=held_hosts, neg_ratio=None)
     assert not any(c["host"] in held_hosts for c in ex_h)
-    ex_i, _ = sd.make_examples(tickets, sd.Knowledge(di, sd.BUILTIN_STOP), di, alert_context="strip_labels",
+    ex_i, _ = sdt.make_examples(tickets, sd.Knowledge(di, sd.BUILTIN_STOP), di, alert_context="strip_labels",
                                exclude_instances=held_inst, neg_ratio=None)
     assert not any(c["instance"] in held_inst or (c["kind"] == "token" and c["host"] in held_inst) for c in ex_i)
 
 
 def test_holdout_names_is_seeded():
     names = [f"h{i}" for i in range(50)]
-    assert sd.holdout_names(names, 0.2, 7) == sd.holdout_names(names, 0.2, 7)
-    assert len(sd.holdout_names(names, 0.2, 7)) == 10
+    assert sdt.holdout_names(names, 0.2, 7) == sdt.holdout_names(names, 0.2, 7)
+    assert len(sdt.holdout_names(names, 0.2, 7)) == 10
 
 
 # --- End to end ----------------------------------------------------------------------
@@ -300,7 +301,7 @@ def test_holdout_names_is_seeded():
 def test_synthetic_examples_teach_bare_instances():
     tickets = synthetic_tickets()
     d = sd.LocalServerDirectory.from_sources(tickets, None)
-    _, counts = sd.make_examples(tickets, sd.Knowledge(d, sd.BUILTIN_STOP), d, alert_context="strip_labels",
+    _, counts = sdt.make_examples(tickets, sd.Knowledge(d, sd.BUILTIN_STOP), d, alert_context="strip_labels",
                                  neg_ratio=None)
     assert counts["before_sampling"][("instance", "synthetic")] > 0
     assert counts["before_sampling"].get(("instance", "human"), 0) == 0  # no natural bare mentions in training
@@ -309,7 +310,7 @@ def test_synthetic_examples_teach_bare_instances():
 def test_end_to_end_finds_a_bare_instance_seen_only_inside_host_instance():
     tickets = synthetic_tickets(n=180)
     d = sd.LocalServerDirectory.from_sources(tickets, None)
-    model, counts = sd.fit_config(tickets, d, kind="logreg", alert_context="strip_labels", instance_model=False,
+    model, counts = sdt.fit_config(tickets, d, kind="logreg", alert_context="strip_labels", instance_model=False,
                                   seed=0, max_chars=5000, neg_ratio=10)
     assert counts["examples"] > 0
     t = human(999, "The FINANCE instance is down again, please look.", subject="Outage")
@@ -334,27 +335,28 @@ def test_profile_and_vocabulary_features_leave_the_name_itself_out():
 
 
 def test_model_saved_by_the_script_loads_in_another_program(tmp_path):
-    """Running server_detector.py as a script must not save its classes as __main__.ServerModel."""
+    """Running the training command must save the package's classes, not __main__.ServerModel."""
     import json
     import subprocess
     import sys
+    from pathlib import Path
     train = tmp_path / "train.jsonl"
     train.write_text("".join(json.dumps(t) + "\n" for t in synthetic_tickets(n=150)), encoding="utf-8")
     model_path = tmp_path / "m.joblib"
-    subprocess.run([sys.executable, "server_detector.py", "train", "--train", str(train), "--model-path",
-                    str(model_path)], capture_output=True, text=True, check=True)
+    subprocess.run([sys.executable, "-m", "tools.server_detector", "train", "--train", str(train), "--model-path",
+                    str(model_path)], capture_output=True, text=True, check=True, cwd=Path(__file__).parent.parent)
     load = ("import joblib, sys; b = joblib.load(sys.argv[1]); "
             "print(type(b['model']).__module__, type(b['model']).__name__)")
     out = subprocess.run([sys.executable, "-c", load, str(model_path)], capture_output=True, text=True, check=True)
-    assert out.stdout.split() == ["server_detector", "ServerModel"]
+    assert out.stdout.split() == ["ticket_analysis.server_detector", "ServerModel"]
 
 
 def test_client_dropout_hides_client_features_for_a_share_of_tickets():
     tickets = synthetic_tickets(n=100)
     d = sd.LocalServerDirectory.from_sources(tickets, None)
     know = sd.Knowledge(d, sd.BUILTIN_STOP)
-    _, none = sd.make_examples(tickets, know, d, alert_context="strip_labels", neg_ratio=None, client_dropout=0.0)
-    ex, half = sd.make_examples(tickets, know, d, alert_context="strip_labels", neg_ratio=None, client_dropout=0.5)
+    _, none = sdt.make_examples(tickets, know, d, alert_context="strip_labels", neg_ratio=None, client_dropout=0.0)
+    ex, half = sdt.make_examples(tickets, know, d, alert_context="strip_labels", neg_ratio=None, client_dropout=0.5)
     assert none["client_hidden_tickets"] == 0 and 30 < half["client_hidden_tickets"] < 70
     assert {c["dense"]["client_known"] for c in ex} == {0.0, 1.0}
     assert {c["label"] for c in ex} >= {"host", "instance"}  # labels still use the client
@@ -533,7 +535,7 @@ def test_word_like_names_known_only_from_dw_servers_are_not_host_candidates():
 def test_thresholds_are_chosen_without_rule_matches():
     recs = [{"label": "host", "ph": 0.95, "pi": 0.0, "rule": "host:port"} for _ in range(50)]
     recs += [{"label": "host", "ph": 0.6, "pi": 0.0, "rule": None}, {"label": "none", "ph": 0.3, "pi": 0.0, "rule": None}]
-    assert sd.best_f1_threshold(recs, "host") == pytest.approx(0.6)
+    assert sdt.best_f1_threshold(recs, "host") == pytest.approx(0.6)
 
 
 def test_without_labeled_drops_holdout_tickets(tmp_path):
@@ -541,9 +543,9 @@ def test_without_labeled_drops_holdout_tickets(tmp_path):
     tickets = [human(str(i), "on server fakesql01") for i in range(4)]
     labels = tmp_path / "holdout.jsonl"
     write_jsonl(labels, [{"ticket_id": "1", "labeler": "claude"}, {"ticket_id": "3", "labeler": "claude"}])
-    kept = sd.without_labeled(tickets, [labels, tmp_path / "missing.jsonl"])
+    kept = sdt.without_labeled(tickets, [labels, tmp_path / "missing.jsonl"])
     assert [t["ticket_id"] for t in kept] == ["0", "2"]
-    assert sd.without_labeled(tickets, []) == tickets
+    assert sdt.without_labeled(tickets, []) == tickets
 
 
 def test_table_alert_server_is_detected_everywhere_it_appears():

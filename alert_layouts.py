@@ -24,7 +24,7 @@ from pathlib import Path
 
 from ticket_analysis.alert_parser import COLLECTOR_LABELS, FIRING_LABELS, parse_alert
 from common import DATA_DIR, REPORTS_DIR, md_table, read_jsonl
-from server_detector import BUILTIN_STOP, compress, is_alert_ticket, ticket_names
+from ticket_analysis.server_detector import BUILTIN_STOP, compress, is_alert_ticket, ticket_names
 
 LAYOUTS_DIR = DATA_DIR / "alert_layouts"
 DEFAULT_TICKETS = [DATA_DIR / "train_tickets.jsonl", DATA_DIR / "test_tickets.jsonl"]

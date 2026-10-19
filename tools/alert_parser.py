@@ -13,6 +13,7 @@ from pathlib import Path
 from common import md_table
 from ticket_analysis.alert_parser import LAYOUTS, parse_alert
 from ticket_analysis.jsonl import read_jsonl, write_jsonl
+from ticket_analysis.server_detector import ticket_names
 
 
 # --- Ticket files ----------------------------------------------------------------------------
@@ -38,7 +39,6 @@ def coverage(tickets: list[dict], top: int = 6) -> list[dict]:
     """Per layout: alerts (is_alert tickets), how many it parses with fields beyond the family, how
     many name a server (a server-shaped value in SERVER_FIELDS), and the most-filled fields. A last row counts alerts no layout
     recognises, and human tickets a layout recognises."""
-    from server_detector import ticket_names
     stats: dict[str, dict] = defaultdict(lambda: {"alerts": 0, "parsed": 0, "server": 0, "fields": Counter()})
     humans = Counter()
     for t in tickets:

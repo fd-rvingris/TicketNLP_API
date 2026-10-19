@@ -7,7 +7,7 @@ Serves on 127.0.0.1 by default (port 8765). With --host 0.0.0.0 it serves the ne
 DBAs can label; there is no sign-in, labelers type their name, and Zendesk lookups are off unless
 --zendesk on is given, because anyone who can reach the page could use them. Pasted text and fetched
 tickets stay in memory and on the page; the console logs requests without their content. Secrets in
-labeling text are masked character for character. Train the model first: python server_detector.py train
+labeling text are masked character for character. Train the model first: python -m tools.server_detector train
 """
 
 from __future__ import annotations
@@ -23,10 +23,9 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import joblib
 import requests
 
-import server_detector as sd
+import ticket_analysis.server_detector as sd
 import server_labels as sl
 import ticket_analysis.ticket_types as tt
 import tools.ticket_types as ttt
@@ -481,8 +480,8 @@ def make_app(model_path: Path, train_path: Path, port: int, *, zendesk_mode: str
              allowed_hosts: set[str] | None = None, alert_tickets: list[Path] | None = None,
              types_path: Path | None = None) -> App:
     if not model_path.exists():
-        raise SystemExit(f"No model at {model_path}. Run: python server_detector.py train")
-    bundle = joblib.load(model_path)
+        raise SystemExit(f"No model at {model_path}. Run: python -m tools.server_detector train")
+    bundle = sd.load_model(model_path)
     names = client_names(read_jsonl(train_path))
     zendesk = subdomain = None
     if zendesk_mode == "on" or (zendesk_mode == "auto" and not network):

@@ -20,9 +20,8 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
-import joblib
 
-import server_detector as sd
+import ticket_analysis.server_detector as sd
 from common import (_SECRET_PATTERNS, DATA_DIR, REPORTS_DIR, append_jsonl, fmt_pct, md_table, now_iso,
                     parse_server_name, read_jsonl)
 
@@ -393,9 +392,9 @@ def main(argv=None):
     if not labels:
         raise SystemExit(f"No labels in {args.labels}. Label tickets in the detector UI first: python detector_ui.py")
     if not args.model_path.exists():
-        raise SystemExit(f"No model at {args.model_path}. Run: python server_detector.py train")
+        raise SystemExit(f"No model at {args.model_path}. Run: python -m tools.server_detector train")
     tickets = {str(t["ticket_id"]): t for t in read_jsonl(args.tickets)}
-    r = evaluate_labels(labels, tickets, joblib.load(args.model_path), host_threshold=args.host_threshold,
+    r = evaluate_labels(labels, tickets, sd.load_model(args.model_path), host_threshold=args.host_threshold,
                         instance_threshold=args.instance_threshold)
     print(f"{r['labelers']:,} labelers, {r['tickets_done']:,} labeled tickets, {len(r['spans']):,} spans, "
           f"{len(r['detections']):,} detections")

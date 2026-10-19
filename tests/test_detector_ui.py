@@ -6,7 +6,7 @@ import pytest
 import requests
 
 import detector_ui as ui
-import server_detector as sd
+import ticket_analysis.server_detector as sd
 from common import ZendeskClient, make_ticket
 
 
@@ -153,7 +153,7 @@ def test_page_explains_the_layers_with_a_made_up_example():
         assert needle in html
     # the example's rule names are ones the detector can produce
     import re
-    import server_detector as sd
+    import ticket_analysis.server_detector as sd
     source = open(sd.__file__, encoding="utf-8").read()
     for rule in set(re.findall(r'rule: "((?:host|instance):[a-z_]+)"', html)):
         assert f'"{rule}"' in source

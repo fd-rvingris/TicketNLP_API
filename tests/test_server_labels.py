@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import detector_ui as ui
-import server_detector as sd
+import ticket_analysis.server_detector as sd
 import server_labels as sl
 from common import make_ticket, prepare_ticket_text
 

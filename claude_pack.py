@@ -27,7 +27,7 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-import server_detector as sd
+import ticket_analysis.server_detector as sd
 import server_labels as sl
 from baseline import read_labels
 from ticket_analysis.ticket_types import features
