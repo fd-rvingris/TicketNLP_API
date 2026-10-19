@@ -51,7 +51,8 @@ and the layout's `summarize` derives summary fields from them (databases,
 backup_rows, alerts).
 
 `SERVER_FIELDS` lists the fields that name the alert's own servers: `server`,
-`instance`, `db_instance`, `target` (one name each) and `hosts`,
+`instance`, `db_instance`, `target`, `master_host` (Grafana replication alerts:
+the replica's primary) (one name each) and `hosts`,
 `backup_servers`, `instancenames`, `instances`, `targets` (lists).
 `server_detector.ticket_names()` reads this list: the names label training
 examples, fill the known-names directory and fire the `host:alert_field` rule

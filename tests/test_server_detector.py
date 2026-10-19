@@ -383,6 +383,11 @@ def rules_only_model():
     ("Failover on instance abc-sql01 today", {"abc-sql01": ("host", "host:after_server_word")}),
     ("Connect to dbfake7:1433 now", {"dbfake7": ("host", "host:port")}),
     ("Connect to tcp:dbfake8 now", {"dbfake8": ("host", "host:port")}),
+    ("Connect to mysqlfake4:3306 now", {"mysqlfake4": ("host", "host:port")}),
+    ("psql to pgfake5:5432 failed", {"pgfake5": ("host", "host:port")}),
+    ("listener on orafake6:1521 is down", {"orafake6": ("host", "host:port")}),
+    ("exporter fakemaria2:9104 is not scraping", {"fakemaria2": ("host", "host:port")}),
+    ("Open webfake3:8080 now", {}),  # a web port is not a database server
     ("Failover on instance db01.corp.local today", {"db01.corp.local": ("host", "host:after_server_word")}),
     (r"Data Source=fakesql02\SALES,1433;", {r"fakesql02\SALES,1433": ("host_instance", "host:host_instance")}),
     ("Server=dbfake;Database=x", {"dbfake": ("host", "host:connection_string")}),
@@ -555,3 +560,14 @@ def test_table_alert_server_is_detected_everywhere_it_appears():
     d = sd.LocalServerDirectory.from_sources([], None)
     found = sd.detect_servers(t, d, rules_only_model())
     assert [(x["text"], x["rule"]) for x in found] == [("Q9ZZPAP07K", "host:alert_field")] * 3
+
+
+def test_grafana_master_host_is_an_alert_server():
+    t = make_ticket("8", "[WARNING] Alert : MysqlSlaveReplicationLag_Warn",
+                    "instance = fakemaria1.corp.test:9104\nmaster_host = 10.20.30.40\n", is_alert=1)
+    t["alert_fields"] = {"family": "grafana", "layout": "grafana", "instance": "fakemaria1.corp.test:9104",
+                         "master_host": "10.20.30.40"}
+    assert {p.host for p in sd.ticket_names(t)} == {"fakemaria1", "10.20.30.40"}
+    found = sd.detect_servers(t, sd.LocalServerDirectory.from_sources([], None), rules_only_model())
+    assert {(x["text"], x["rule"]) for x in found} == {("fakemaria1.corp.test", "host:alert_field"),
+                                                      ("10.20.30.40", "host:alert_field")}

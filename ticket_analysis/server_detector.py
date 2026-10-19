@@ -761,7 +761,7 @@ def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, win
             "in_url": text[max(0, s - 2):s] == "//", "service": "service" in flags,
             "has_port": parsed.port is not None or "port" in flags or text[max(0, s - 4):s].lower() == "tcp:",
             "after_label": _after_label(text, s),
-            "is_ip": bool(IPV4_RE.match(host)), "sql_port": _sql_port(text, s, e, part)}
+            "is_ip": bool(IPV4_RE.match(host)), "db_port": _db_port(text, s, e, part)}
     if "\\" in part:
         if not (host_name_ok(host, 2) and instance and INSTANCE_RE.match(instance)):
             return None
@@ -789,13 +789,19 @@ def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, win
             "host_ok": host_ok, "inst_ok": inst_ok, "cue": cue}
 
 
-def _sql_port(text: str, s: int, e: int, part: str) -> bool:
-    """True for a port written the SQL Server way: HOST,PORT, tcp:HOST, or a colon port of 1433 or
-    1434. Other colon ports (host:8080, site:443) are web addresses."""
+# Colon ports that mark a database server: SQL Server, MySQL and MariaDB, PostgreSQL, Oracle, MongoDB,
+# and the Prometheus exporters that run on database hosts (mysqld, postgres, sql_exporter, oracledb)
+DB_PORTS = frozenset({"1433", "1434", "3306", "33060", "5432", "1521", "1522", "27017",
+                      "9104", "9187", "9399", "9161"})
+
+
+def _db_port(text: str, s: int, e: int, part: str) -> bool:
+    """True for a port written the SQL Server way (HOST,PORT or tcp:HOST) or a colon port in DB_PORTS.
+    Other colon ports (host:8080, site:443) are web addresses."""
     if "," in part or text[max(0, s - 4):s].lower() == "tcp:":
         return True
     m = re.match(r":(\d{2,5})(?!\d)", text[e:e + 6])
-    return bool(m) and m.group(1) in ("1433", "1434")
+    return bool(m) and m.group(1) in DB_PORTS
 
 
 def _previous_words(words: list[str], ti: int) -> tuple[str, str]:
@@ -873,7 +879,7 @@ def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | Non
         return "host:connection_string"
     if c["in_unc"]:
         return "host:unc_path"
-    if c["has_port"] and c["sql_port"]:
+    if c["has_port"] and c["db_port"]:
         return "host:port"
     if has_digit and not c["is_ip"] and (prev1 in HOST_CUE_WORDS | {"instance"}
                                          or (prev1 == "on" and prev2 in HOST_CUE_WORDS | {"instance"})):
