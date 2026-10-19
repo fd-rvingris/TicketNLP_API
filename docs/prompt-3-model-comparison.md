@@ -9,7 +9,7 @@ docs/prompt-2-transformer-tagger.md) are done.
 Decide, on evidence, which server detector to use by default:
 
 1. **Baseline:** logistic regression with rules, no augmentation
-   (`server_detector.py train --augment 0`).
+   (`python -m tools.server_detector train --augment 0`).
 2. **Augmented:** logistic regression with rules and name-swap augmentation
    (prompt 1).
 3. **Transformer:** the fine-tuned token tagger with rules (prompt 2).
@@ -40,7 +40,7 @@ prompts 1 and 2 actually built before using the names below.
 
 ### 1. One comparison script
 
-Add `compare_detectors.py` that, for each of the three models, trains on
+Add `tools/compare_detectors.py` that, for each of the three models, trains on
 data/train_tickets.jsonl (or loads an already trained model when its settings
 match) and measures, with the same seed and the same held-out names for all
 three:
@@ -76,13 +76,13 @@ hand-labeled new names when there are at least 50), provided its probe and
 hand-label precision is at least 80% and its prediction time is under one
 second per ticket on this machine. Ties go to the cheaper model.
 
-Then make that model the one `detector_ui.py` and `server_labels.py` load by
+Then make that model the one `tools/detector_ui.py` and `tools/server_labels.py` load by
 default, update README.md (which model is the default, why, and how to switch),
 and restart nothing that the user is running without asking.
 
 ## Deliverables
 
-- compare_detectors.py, its tests (made-up data, a fast path with tiny models),
+- tools/compare_detectors.py, its tests (made-up data, a fast path with tiny models),
   the comparison report, the default switched if the evidence supports it,
   README.md updated.
 - A one-page summary for the user: the recommendation first, then the figures

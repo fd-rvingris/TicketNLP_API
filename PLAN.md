@@ -1,5 +1,9 @@
 # Ticket Classifier PoC: Plan
 
+> **Update 2026-10-19:** this project is no longer throwaway. It is being developed into the ticket
+> analysis API (docs/prompt-6-ticket-api.md); the code is split into the ticket_analysis package and
+> tools/. README.md describes the current layout and commands. The plan below is kept as written.
+
 Prepared 2026-10-15. A standalone proof of concept, run before and separately from the Keystone integration work. `README.md` describes how to use the PoC, and `BUILD_PROMPT.md` is the prompt that builds it in Claude Code.
 
 ## Context and Goal

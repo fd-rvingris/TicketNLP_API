@@ -4,7 +4,7 @@ Prepared 2026-10-16 for the reviewer who proposed recommendations A1 to H5, and
 for the project team.
 
 Each item was checked against the code (`server_detector.py`, `claude_pack.py`,
-`server_labels.py`) and by running made-up strings shaped like the reviewer's
+`server_labels.py`, since split into ticket_analysis/ and tools/) and by running made-up strings shaped like the reviewer's
 examples through the saved model, with no client selected. "Probe" below refers
 to that run.
 

@@ -8,7 +8,8 @@ It builds on prompt 5 (the taxonomy classifier with keyword rules and the uncert
 Expose the server detector and the taxonomy classifier as a JSON HTTP API that can run in Azure
 Container Apps, with an OpenAPI (OAS 3.1) document checked into the repo. Callers send ticket text
 with an optional subject and an optional Zendesk organization id; the API returns detected servers
-and instances as key/value pairs, the taxonomy type and intent, or both.
+and instances as key/value pairs, the taxonomy type and intent, or both. The API imports only the
+ticket_analysis package (never tools/) and its image installs only requirements.txt.
 
 Decisions already made:
 
@@ -31,11 +32,14 @@ Decisions already made:
 ## Read first
 
 README.md (sections "Server and instance detector", "Trying the model by hand"),
-detector_ui.py (`analyze()`, `ticket_for_text()`, `App.classify_text()`, `make_app()`),
-server_detector.py (`detect_servers()`, the detection dict built around line 1169, the status
-values, the `ServerDirectory` protocol, `LocalServerDirectory` and how the model's features use the
-directory), common.py (`load_cmdb()`, `parse_server_name()`, data/instances.csv columns), ticket_types.py (`classify()`, `summary()`, `load_alert_map()`), type_rules.py,
-schema.py (TAXONOMY), common.py (`make_ticket()`, `mask_secrets()`), tests/conftest.py.
+tools/detector_ui.py (`analyze()`, `ticket_for_text()`, `App.classify_text()`, `make_app()`),
+ticket_analysis/server_detector.py (`detect_servers()`, the detection dict built around line 1083,
+the status values, the `ServerDirectory` protocol, `LocalServerDirectory`, `load_model()` and how the
+model's features use the directory), ticket_analysis/names.py (`load_cmdb()`, `parse_server_name()`,
+data/instances.csv columns), ticket_analysis/ticket_types.py (`classify()`, `load_alert_map()`,
+`load_model()`), tools/ticket_types.py (`summary()`), ticket_analysis/type_rules.py,
+ticket_analysis/taxonomy.py (TAXONOMY), ticket_analysis/tickets.py (`make_ticket()`),
+ticket_analysis/masking.py (`mask_secrets()`), tests/conftest.py.
 
 ## Data handling rules (strict)
 
@@ -75,7 +79,7 @@ and `analyze()`. Reuse the existing functions rather than copying logic:
   requests.
 - Taxonomy: `ticket_types.classify()` with the saved model and alert map. The API must never train
   a model: if a model file is missing or does not match the taxonomy version, the service is not
-  ready (see /ready). Move any shared helpers out of detector_ui.py rather than importing the UI's
+  ready (see /ready). Move any shared helpers out of tools/detector_ui.py into ticket_analysis rather than importing the UI's
   web server.
 - Joblib files are pickles: load only from the configured model directory, and when
   `MODEL_SHA256` values are configured, refuse files whose hash does not match.
@@ -105,7 +109,7 @@ directory loaded from a snapshot instead of the one saved in the model file.
   store is unreachable, keep serving the last snapshot and report its age in /ready detail logs.
   Responses report the snapshot timestamp in `models.directory`.
 - **Effect on accuracy:** the detector's features depend on the directory, and it was trained with
-  the local one. Before relying on the CMDB-hydrated directory, run `server_detector.py evaluate` (or
+  the local one. Before relying on the CMDB-hydrated directory, run `python -m tools.server_detector evaluate` (or
   an equivalent) with a snapshot built from instances.csv plus alert names and report the change
   against the saved directory. The API must not change detection results when the snapshot holds the
   same names as the model's directory (test this).
@@ -286,7 +290,7 @@ Azure.
 - **Debug detail:** with `DEBUG_RESPONSES=true` (refused unless `AUTH_MODE=none` on loopback),
   responses add the detector's scored candidates and the classifier's cleaned text and rule
   checks, as the detector UI shows them. Off by default and never on in Azure.
-- **The existing detector UI stays the visual demo.** Add a `--api URL` option to detector_ui.py only
+- **The existing detector UI stays the visual demo.** Add a `--api URL` option to tools/detector_ui.py only
   if it is simple; otherwise note it as a follow-up.
 
 ### 8. Tests

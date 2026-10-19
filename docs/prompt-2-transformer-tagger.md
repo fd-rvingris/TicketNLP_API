@@ -13,13 +13,14 @@ name on the next line, where the current model sees only three words on each
 side. Sub-word tokenization lets it judge unseen names by shape.
 
 It must plug into the existing pipeline unchanged: the same candidates, rules,
-pairing, statuses, `detect_servers()`, the UI (detector_ui.py), hand-label
-scoring (server_labels.py) and the probe set from prompt 1.
+pairing, statuses, `detect_servers()`, the UI (tools/detector_ui.py), hand-label
+scoring (tools/server_labels.py) and the probe set from prompt 1.
 
 ## Read first
 
 README.md, docs/server-detector-prompt.md, docs/prompt-1-name-swap-augmentation.md,
-server_detector.py, server_labels.py, detector_ui.py and their tests. Check what
+ticket_analysis/server_detector.py, tools/server_detector.py, tools/server_labels.py,
+tools/detector_ui.py and their tests. Check what
 prompt 1 actually built (augmentation flag, generator, probe eval) before
 relying on the names below.
 
@@ -47,8 +48,8 @@ relying on the names below.
   containing backslashes with the Write or Edit tool.
 - Run training in the background with `python -u`; it can take an hour or more
   on CPU. Estimate time on a small subset first and tell the user.
-- Saved models must load from other programs: run scripts through the imported
-  module (see the end of server_detector.py).
+- Saved models must load from other programs: define every class a saved model
+  needs in the ticket_analysis package, never in a tools/ script run as `__main__`.
 
 ## Design
 
@@ -75,7 +76,8 @@ merge window outputs by averaging token probabilities in the overlaps.
 
 ### Integration
 
-Add `TransformerModel` (new module, for example transformer_detector.py) that
+Add `TransformerModel` (new module, for example ticket_analysis/transformer_detector.py, with
+training and evaluation in tools/transformer_detector.py) that
 gives the existing pipeline what it needs. Preferred: score each existing
 candidate by the maximum token probability of its class over the candidate's
 character span, so `ticket_candidates()`, the rules (still at least
@@ -86,12 +88,12 @@ ticket text, so add a narrow hook: `detect_servers()` calls
 
 Thresholds come from a validation split, chosen as `best_f1_threshold()` does
 (rule matches excluded). Save to data/models/server_detector_transformer/
-(weights, tokenizer, thresholds, the directory and settings) so detector_ui.py
-and server_labels.py can load it with `--model-path`.
+(weights, tokenizer, thresholds, the directory and settings) so tools/detector_ui.py
+and tools/server_labels.py can load it with `--model-path`.
 
 ### Training and evaluation
 
-- `python transformer_detector.py train` and `evaluate`, with --train, --test,
+- `python -m tools.transformer_detector train` and `evaluate`, with --train, --test,
   --seed, --epochs, --max-steps, --window, --stride, --augment, --model-name.
 - evaluate runs the same standard test, unseen-host test and unseen-instance
   test as server_detector.evaluate(), with the same seeds and held-out names,
@@ -104,7 +106,8 @@ and server_labels.py can load it with `--model-path`.
 
 ## Deliverables
 
-- transformer_detector.py, the `scores_for_ticket` hook, pinned optional
+- ticket_analysis/transformer_detector.py and tools/transformer_detector.py, the
+  `scores_for_ticket` hook, pinned optional
   requirements, a saved model under data/models/, tests (span to BIO and back,
   window merging, the hook, loading in detector_ui), README section.
 - A short summary of figures only, against the prompt 1 results.

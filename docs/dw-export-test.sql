@@ -13,7 +13,7 @@
   Change @Seed for a different sample. If fewer tickets match than requested,
   the query returns all that match; check the row count in the Messages tab.
 
-  Column names match what load_export.py reads. See docs/dw-ticket-schema.md.
+  Column names match what tools/load_export.py reads. See docs/dw-ticket-schema.md.
 
   How to run and save (SSMS on the pool server):
   1. Tools > Options > Query Results > SQL Server > Results to Grid: turn on
@@ -24,7 +24,7 @@
      CSV, named test_tickets.csv.
   3. The file contains client ticket text. Keep it in the PoC's data\ folder,
      which git ignores, then run:
-       python load_export.py data\test_tickets.csv --output data\test_tickets.jsonl
+       python -m tools.load_export data\test_tickets.csv --output data\test_tickets.jsonl
 
   Staff columns, for grouping or filtering by DBA (kept for analysis, never sent
   to the model):

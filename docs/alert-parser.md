@@ -1,13 +1,13 @@
 # Alert Parser
 
-How [alert_parser.py](../alert_parser.py) turns an alert ticket into structured
-fields. It runs inside `make_ticket` in common.py, so every ticket loaded by
-`load_export.py` (or fetched by `fetch_tickets.py`) gets an `alert_fields` value.
+How [ticket_analysis/alert_parser.py](../ticket_analysis/alert_parser.py) turns an alert ticket into structured
+fields. It runs inside `make_ticket` in ticket_analysis/tickets.py, so every ticket loaded by
+`tools/load_export.py` (or fetched by `tools/fetch_tickets.py`) gets an `alert_fields` value.
 The fields are for review, filtering, the server detector and analysis; they are
 never sent to the model.
 
 Alerts are machine-generated from a few fixed templates. The layouts below were
-found with `python alert_layouts.py inventory` (see "Finding the layouts").
+found with `python -m tools.alert_layouts inventory` (see "Finding the layouts").
 
 ## The registry
 
@@ -217,9 +217,9 @@ are recognised by the detail line and get their server from Resource.
 ## Commands
 
 ```
-python alert_parser.py coverage data\train_tickets.jsonl data\test_tickets.jsonl
-python alert_parser.py data\train_tickets.jsonl data\test_tickets.jsonl ...
-python alert_layouts.py inventory [--tickets ...]
+python -m tools.alert_parser coverage data\train_tickets.jsonl data\test_tickets.jsonl
+python -m tools.alert_parser data\train_tickets.jsonl data\test_tickets.jsonl ...
+python -m tools.alert_layouts inventory [--tickets ...]
 ```
 
 `coverage` prints, per layout, the alerts (is_alert tickets), the share parsed
@@ -271,7 +271,7 @@ are now labeled from their alert fields, like other alerts.
 
 ## Finding the layouts
 
-`python alert_layouts.py inventory` reduces each alert to its layout signature:
+`python -m tools.alert_layouts inventory` reduces each alert to its layout signature:
 the ordered template labels and header lines of the description (values
 removed) plus the subject's template words up to "Alert #". Labels seen in
 fewer than 10 alerts are treated as free text and the external-email banner

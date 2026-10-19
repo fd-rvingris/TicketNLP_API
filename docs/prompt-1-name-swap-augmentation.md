@@ -6,7 +6,7 @@ depend on what this one builds, so keep the interfaces named here.
 
 ## Goal
 
-The server detector (`server_detector.py`) finds hosts well when it already knows
+The server detector (`ticket_analysis/server_detector.py`) finds hosts well when it already knows
 the name, and poorly when it does not. The cause is the training labels: every
 positive example is a name already in the known-names directory (alert fields,
 dw_servers, data/instances.csv), so the model learns "familiar name means host"
@@ -23,8 +23,8 @@ three prompts to measure detection of unseen names the same way.
 ## Read first
 
 README.md (the specification; keep it accurate), docs/server-detector-prompt.md
-(the original build prompt), docs/alert-parser.md, and server_detector.py,
-server_labels.py, detector_ui.py with their tests.
+(the original build prompt), docs/alert-parser.md, and ticket_analysis/server_detector.py,
+tools/server_detector.py, tools/server_labels.py, tools/detector_ui.py with their tests.
 
 ## Data handling rules (strict)
 
@@ -45,9 +45,9 @@ server_labels.py, detector_ui.py with their tests.
   with the Write or Edit tool, never with a shell heredoc or `python - <<EOF`.
 - Long jobs (train, evaluate take 4 to 8 minutes) run in the background with
   `python -u` so their output is not buffered.
-- `server_detector.py` runs `main()` through the imported module so pickled
-  models resolve as `server_detector.ServerModel`; keep that pattern in any new
-  script that saves a model.
+- Model classes live in the ticket_analysis package, so pickled models
+  resolve as `ticket_analysis.server_detector.ServerModel`; keep any class a
+  saved model needs there, never in a tools/ script run as `__main__`.
 
 ## What exists
 
@@ -69,8 +69,8 @@ server_labels.py, detector_ui.py with their tests.
   unseen-instance test (grouped holdouts via `holdout_names()` and
   `LocalServerDirectory.without()`), pairing accuracy, a rules table, and writes
   data/reports/server-detector-<timestamp>.md.
-- Hand labels: server_labels.py and the Label tab in detector_ui.py. DBAs may
-  have saved labels in data/labels/server_spans.jsonl; `python server_labels.py
+- Hand labels: tools/server_labels.py and the Label tab in tools/detector_ui.py. DBAs may
+  have saved labels in data/labels/server_spans.jsonl; `python -m tools.server_labels
   evaluate` scores the saved model against them.
 
 ## Baseline to beat (report server-detector-20261016-140635.md)
@@ -101,12 +101,12 @@ conventions (`QRX-SQLZ-07`, `wdcsqlp07`, `abc-sql09.corp.local`,
 instances that are ordinary words such as REPORTS or PROD), plus decoys that
 must not be detected (logins like CORP\jsmith, database names, file paths,
 URLs, KB numbers, "managed instance"). Each line is a ticket in the
-load_export.py shape plus `gold_spans`: a list of
+tools/load_export.py shape plus `gold_spans`: a list of
 `{field, start, end, kind}` with kind host, host_instance or bare_instance.
 Write a validator test that checks every span's offsets match its text.
 
-Add `probe_eval(model, directory, path)` (in server_detector.py or a small new
-module) returning precision and recall per class on the probe set, using the
+Add `probe_eval(model, directory, path)` (in tools/server_detector.py or a small new
+module in tools/) returning precision and recall per class on the probe set, using the
 same overlap matching as `server_labels.evaluate_labels`, with rule and model
 detections reported separately. Prompt 3 calls it for every model.
 
@@ -146,7 +146,7 @@ points. State the rule and the result in the report.
 
 ## Deliverables
 
-- server_detector.py changes (generator, augmentation, probe eval, CLI flag),
+- tools/server_detector.py changes (generator, augmentation, probe eval, CLI flag),
   tests/fixtures/probe_tickets.jsonl, tests for the generator (pattern kept,
   avoid list honored, seeded), augmentation (all occurrences replaced, casing
   kept, labels follow the new names, no held-out name leaks), and probe eval.

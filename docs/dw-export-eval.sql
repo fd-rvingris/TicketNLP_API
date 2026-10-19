@@ -1,6 +1,6 @@
 /*
   EVALUATION ticket export from DW2.0: tickets never pulled before, for testing
-  the taxonomy (ticket_types.py) and the server detector on unseen data.
+  the taxonomy (ticket_analysis/ticket_types.py) and the server detector on unseen data.
 
   Returns up to @Alerts automated monitoring alerts and up to @Human tickets
   written by people, created from @From (the first day after the training
@@ -20,7 +20,7 @@
   requested, the query returns all that match; check the row count in the
   Messages tab.
 
-  Column names match what load_export.py reads, and are the same as in
+  Column names match what tools/load_export.py reads, and are the same as in
   dw-export-test.sql. See docs/dw-ticket-schema.md.
 
   How to run and save (SSMS on the pool server):
@@ -32,8 +32,8 @@
      CSV, named eval_tickets.csv.
   3. The file contains client ticket text. Keep it in the PoC's data\ folder,
      which git ignores, then run:
-       python load_export.py data\eval_tickets.csv --output data\eval_tickets.jsonl --exclude data\train_tickets.jsonl data\test_tickets.jsonl
-       python alert_parser.py data\eval_tickets.jsonl
+       python -m tools.load_export data\eval_tickets.csv --output data\eval_tickets.jsonl --exclude data\train_tickets.jsonl data\test_tickets.jsonl
+       python -m tools.alert_parser data\eval_tickets.jsonl
 
   Before relying on the results, the notes in dw-export-test.sql apply: run
   against production DW2.0, and organization_id assumes DimClient.SourceID is

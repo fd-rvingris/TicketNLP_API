@@ -1,20 +1,38 @@
-# Ticket Classifier PoC
+# Ticket Analysis
 
-A throwaway proof of concept that measures whether an LLM can classify
-Fortified Data Zendesk tickets (type, intent) and extract the servers and SQL
-instances they mention, matched against the Keystone CMDB. It is not
-integrated with Keystone. What carries forward is the taxonomy, the prompt,
-the output schema and the hand-labeled results.
+Classifies Fortified Data Zendesk tickets (type, intent) and finds the SQL
+Server hosts and instances they mention, matched against the known names of
+each client. It started as a proof of concept and is being developed into a
+ticket analysis API hosted in Azure (docs/prompt-6-ticket-api.md). Today it
+runs locally: the server detector and the taxonomy classifier work without an
+LLM, and an LLM classifier path measures what a single Claude call can do.
+
+## Layout
+
+| Folder | Holds |
+| --- | --- |
+| ticket_analysis/ | What the API ships: alert parsing, secret masking, text cleaning, server detection, type classification and the taxonomy. It never imports from tools/, and requirements.txt is all it needs. |
+| tools/ | Data loading, the LLM run workflow, training, evaluation, labeling and the review pages. Run each as `python -m tools.<name>` from the repository root. |
+| prompts/ | LLM prompt versions. |
+| docs/ | Design notes, build prompts and export queries. |
+| tests/ | pytest; no network access. |
 
 ## What it does
 
-1. Gets tickets from Zendesk (read-only GET requests) or from an export file.
-2. Classifies each ticket with one Claude API call that returns structured
-   output: primary type, secondary types, intent, confidence, a short
-   rationale, and server/instance mentions with a quote from the ticket text.
-3. Rejects any mention whose quote is not in the ticket, then matches mentions
-   to the ticket's client instances from a CMDB export.
-4. Reports accuracy against hand labels, the unknown rate, the CMDB match rate,
+1. Gets tickets from Zendesk (read-only GET requests) or from an export file,
+   and parses the fields of alert tickets.
+2. Finds servers and instances in the ticket text with a local model
+   (ticket_analysis/server_detector.py), and resolves each against the
+   client's known names.
+3. Classifies the ticket type and intent locally: the alert-name table for
+   alerts, keyword rules, then a model trained on Claude's labels
+   (ticket_analysis/ticket_types.py).
+4. Alternatively, classifies each ticket with one Claude API call that returns
+   structured output (primary type, secondary types, intent, confidence, a
+   short rationale, and server/instance mentions with a quote from the ticket
+   text), rejects any mention whose quote is not in the ticket, and matches
+   mentions to the ticket's client instances from a CMDB export.
+5. Reports accuracy against hand labels, the unknown rate, the CMDB match rate,
    cost and latency, and compares runs across models or prompt versions.
 
 ## Setup (Windows, PowerShell)
@@ -22,15 +40,18 @@ the output schema and the hand-labeled results.
     cd C:\src\ticket-classifier-poc
     C:\Python314\python.exe -m venv .venv
     .\.venv\Scripts\Activate.ps1
-    pip install -r requirements.txt
-    Copy-Item .env.example .env   # then fill in the values
-    python -m pytest              # unit tests; no network access
+    pip install -r requirements-tools.txt  # the package, the tools and pytest
+    Copy-Item .env.example .env            # then fill in the values
+    python -m pytest                       # unit tests; no network access
+
+requirements.txt alone is what the ticket_analysis package needs; the tools
+also need requirements-tools.txt.
 
 `.env` values:
 
 | Variable | Purpose |
 | --- | --- |
-| ANTHROPIC_API_KEY | Anthropic API key (PoC workspace with a spend limit) |
+| ANTHROPIC_API_KEY | Anthropic API key (a workspace with a spend limit) |
 | ZENDESK_SUBDOMAIN | e.g. fortifieddata |
 | ZENDESK_EMAIL / ZENDESK_API_TOKEN | Agent email and API token; the code only issues GET requests |
 
@@ -49,33 +70,33 @@ the output schema and the hand-labeled results.
 
 ## Commands
 
-    python fetch_tickets.py --since 2026-09-01 --limit 100
-    python fetch_tickets.py --ids 12345,12346
-    python load_export.py path\to\export.csv
-    python classify.py --limit 20 --dry-run          # show the prompt only
-    python classify.py --limit 20                     # default model and effort
-    python classify.py --model claude-haiku-5-5 --run-name haiku
-    python report.py --run latest                     # metrics + labels.csv
-    python compare.py --runs opus-v1 haiku            # side-by-side metrics
-    python view_tickets.py --open                     # browse tickets in a local HTML page
-    python view_tickets.py --run latest --open        # the same, with a run's results
-    python baseline.py                                # non-LLM baseline on the training/test exports
-    python split_alerts.py data\train_tickets.csv     # writes train_tickets_alerts.csv and _human.csv
-    python server_detector.py evaluate                # non-LLM server and instance detector (see below)
-    python detector_ui.py --open                      # try the saved detector on pasted text or a Zendesk ticket
-    python claude_pack.py labels                      # server-labeling batches for a Claude chat (docs/claude-labeling-prompt.md)
-    python claude_pack.py taxonomy                    # digest of all tickets for a taxonomy chat (docs/claude-taxonomy-prompt.md)
-    python claude_pack.py import-labels data\claude_pack\returned\labels_*.jsonl
-    python claude_pack.py types                       # a round of type-labeling batches for Claude Desktop (see Labeling)
-    python claude_pack.py import-types data\claude_pack\returned\types_round_001_*.jsonl
+    python -m tools.fetch_tickets --since 2026-09-01 --limit 100
+    python -m tools.fetch_tickets --ids 12345,12346
+    python -m tools.load_export path\to\export.csv
+    python -m tools.classify --limit 20 --dry-run        # show the prompt only
+    python -m tools.classify --limit 20                  # default model and effort
+    python -m tools.classify --model claude-haiku-5-5 --run-name haiku
+    python -m tools.report --run latest                  # metrics + labels.csv
+    python -m tools.compare --runs opus-v1 haiku         # side-by-side metrics
+    python -m tools.view_tickets --open                  # browse tickets in a local HTML page
+    python -m tools.view_tickets --run latest --open     # the same, with a run's results
+    python -m tools.baseline                             # non-LLM baseline on the training/test exports
+    python -m tools.split_alerts data\train_tickets.csv  # writes train_tickets_alerts.csv and _human.csv
+    python -m tools.server_detector evaluate             # non-LLM server and instance detector (see below)
+    python -m tools.detector_ui --open                   # try the saved detector on pasted text or a Zendesk ticket
+    python -m tools.claude_pack labels                   # server-labeling batches for a Claude chat (docs/claude-labeling-prompt.md)
+    python -m tools.claude_pack taxonomy                 # digest of all tickets for a taxonomy chat (docs/claude-taxonomy-prompt.md)
+    python -m tools.claude_pack import-labels data\claude_pack\returned\labels_*.jsonl
+    python -m tools.claude_pack types                    # a round of type-labeling batches for Claude Desktop (see Labeling)
+    python -m tools.claude_pack import-types data\claude_pack\returned\types_round_001_*.jsonl
 
 Runs are resumable: already classified tickets in a run are skipped. A run
 keeps its model, effort, prompt version and taxonomy version; reusing its name
 with different settings is refused.
 
-`fetch_tickets.py` uses the Zendesk Search API (newest first, at most 1,000
+`tools/fetch_tickets.py` uses the Zendesk Search API (newest first, at most 1,000
 tickets per query) for `--since`, and adds or replaces tickets in
-data/tickets.jsonl by ticket_id. `load_export.py` accepts .csv (common Zendesk
+data/tickets.jsonl by ticket_id. `tools/load_export.py` accepts .csv (common Zendesk
 export column names), .json and .jsonl/.ndjson files. CSV cells containing the
 text NULL (as SSMS writes SQL NULL) are treated as empty. `--exclude FILE ...`
 leaves out tickets already in other ticket files; docs/dw-export-eval.sql pulls
@@ -94,7 +115,7 @@ dw_priority, dw_impact and dw_complexity (Zendesk fields from DW2.0) are kept
 under `dw_fields`.
 
 Every loaded ticket also gets `alert_fields`, parsed from the text by
-alert_parser.py when the text matches one of the alert layouts (null
+ticket_analysis/alert_parser.py when the text matches one of the alert layouts (null
 otherwise): collector labeled lines, the collector's one-line Markdown and
 table layouts, Backup Exception Reports, Grafana [FIRING alerts and Volume
 Capacity alerts. Layouts are recognised by their body as well as their
@@ -105,18 +126,18 @@ severity and open_date; the fields that name servers are listed once, in
 DW2.0 columns, these are for review and analysis and are never sent to the
 model. See [docs/alert-parser.md](docs/alert-parser.md).
 
-    python alert_parser.py coverage data\train_tickets.jsonl data\test_tickets.jsonl
-    python alert_parser.py data\train_tickets.jsonl ...   # re-parse alert_fields in place
-    python alert_layouts.py inventory   # group alerts by template; masked report and examples
+    python -m tools.alert_parser coverage data\train_tickets.jsonl data\test_tickets.jsonl
+    python -m tools.alert_parser data\train_tickets.jsonl ...  # re-parse alert_fields in place
+    python -m tools.alert_layouts inventory                    # group alerts by template; masked report and examples
 
-`alert_layouts.py inventory` groups the alerts of the ticket files by layout
+`python -m tools.alert_layouts inventory` groups the alerts of the ticket files by layout
 signature (the template's labels and header lines, values removed) and writes
 data/reports/alert-layouts-<timestamp>.md and one masked example file per
 layout to data/alert_layouts/, to share with the collector owners. Examples
 keep template words only; every other word becomes its shape (SQL01 becomes
 L3 D2).
 
-`view_tickets.py` writes data/viewer/<ticket file>[-<run>].html: a single page
+`tools/view_tickets.py` writes data/viewer/<ticket file>[-<run>].html: a single page
 with no network access that lists the tickets with search and filters (alert
 or human, Zendesk type, category, client, alert name, and predicted type when
 --run is given), and shows each ticket's fields, weak labels, DW2.0 servers
@@ -128,13 +149,13 @@ text, so keep it under data/.
 The page's "Open ticket file…" button, or dropping a file on the page, loads
 another .jsonl (or .json) ticket file in its place. The file is read in the
 browser only; nothing is uploaded or saved. The page masks it with the
-patterns from common.py, which view_tickets.py embeds, so "As sent to model"
-matches classify.py; tests/test_viewer.py checks this in Node.js and skips
-the check when Node is not installed. `python view_tickets.py --blank`
+patterns from ticket_analysis/masking.py, which tools/view_tickets.py embeds, so "As sent to model"
+matches tools/classify.py; tests/test_viewer.py checks this in Node.js and skips
+the check when Node is not installed. `python -m tools.view_tickets --blank`
 writes data/viewer/viewer.html with no tickets, for opening files this way.
 A file opened in the page carries no run results.
 
-`classify.py` options:
+`tools/classify.py` options:
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
@@ -157,7 +178,7 @@ to data/dry-run/<ticket_id>.txt.
 
 - One API call per ticket, no tools. The response is constrained with
   structured outputs (`output_config.format`) to a JSON schema generated from
-  schema.py and validated again with Pydantic.
+  ticket_analysis/taxonomy.py (via tools/schema.py) and validated again with Pydantic.
 - Effort is set explicitly (`low` by default). Thinking stays on; it cannot
   be disabled on claude-opus-5-5.
 - For claude-opus-5-5, claude-opus-5, claude-sonnet-5-5 and claude-fable-5-1
@@ -171,7 +192,7 @@ to data/dry-run/<ticket_id>.txt.
 - The system prompt (role, taxonomy, rules) is identical for every ticket and
   is prompt-cached; the ticket and its client's server list go in the user
   message.
-- Estimated cost uses the price table in common.py, which is marked as
+- Estimated cost uses the price table in tools/common.py, which is marked as
   needing confirmation against current Anthropic pricing.
 
 Each run writes data/runs/<run-name>/run.json (settings) and results.jsonl,
@@ -182,7 +203,7 @@ counts, latency_ms, estimated_cost_usd and error.
 
 ## Non-LLM baseline
 
-`baseline.py` sets the bar the LLM has to beat. It trains TF-IDF features
+`tools/baseline.py` sets the bar the LLM has to beat. It trains TF-IDF features
 (word 1-2 grams, subject and first 8,000 description characters fitted
 separately) with logistic regression on data/train_tickets.jsonl and scores
 on data/test_tickets.jsonl, predicting the Zendesk weak labels zendesk_type
@@ -198,7 +219,7 @@ is redundant with zendesk_type. Options: --targets, --min-count, --sizes,
 data/reports/baseline-<timestamp>.md; the console shows metrics only. It runs
 locally and sends nothing to any service.
 
-    python baseline.py --labels data\claude_pack\returned\taxonomy_sample_labels.jsonl
+    python -m tools.baseline --labels data\claude_pack\returned\taxonomy_sample_labels.jsonl
 
 With --labels, it predicts a label file's primary_type and intent instead,
 with stratified cross-validation (--folds, 5) over the labeled tickets found in
@@ -207,15 +228,15 @@ tickets. Scores are split by the labeler's own confidence. It shows how well a
 taxonomy's classes separate from the ticket text alone. Report:
 data/reports/baseline-labels-<timestamp>.md.
 
-For the type, the keyword rules in `type_rules.py` run first, as in the
+For the type, the keyword rules in `ticket_analysis/type_rules.py` run first, as in the
 Classify tab: a rule that fires replaces the model's prediction. The rules are
 fixed patterns, not fitted, so every ticket is still scored by a model that
 never saw it. The report lists each rule's fires and precision against the
 labels, and an uncertain-flag table (accuracy of the tickets the model decides
 when its top probability is below p or within gap of the second, against the
 rest). --no-rules leaves the rules out. --clean has the model read text with
-email boilerplate removed (`text_clean.py`); the rules always read cleaned
-text. `python text_clean.py` measures what the cleaning removes from the
+email boilerplate removed (`ticket_analysis/text_clean.py`); the rules always read cleaned
+text. `python -m tools.text_clean` measures what the cleaning removes from the
 ticket files, per pattern, as counts only.
 
 Measured 2026-10-17 on Claude's 600 labels (seed 0; each cell accuracy /
@@ -237,25 +258,31 @@ The access_request rule was tightened once against the labels (refresh,
 restore, script and narrower staff-account exclusions), so its precision is
 slightly optimistic.
 
-`split_alerts.py` splits a DW2.0 .csv export or a .jsonl ticket file by its
+`tools/split_alerts.py` splits a DW2.0 .csv export or a .jsonl ticket file by its
 is_alert column into <name>_alerts and <name>_human files of the same format
 next to it (or in --out-dir), so alerts and human tickets can be trained and
-scored separately, for example `python baseline.py --train
+scored separately, for example `python -m tools.baseline --train
 data\train_tickets_alerts.jsonl --test data\test_tickets_alerts.jsonl`. CSV
 rows are copied unchanged. Tickets without a readable is_alert value go in
 neither file and are counted.
 
 ## Server and instance detector
 
-`server_detector.py` finds SQL Server hosts and named instances in ticket text
+`ticket_analysis/server_detector.py` finds SQL Server hosts and named instances in ticket text
 without an LLM, including names it has never seen and instance names written
 on their own ("the REPORTS instance", "MSSQL$REPORTS"). It runs locally and
-sends nothing to any service.
+sends nothing to any service. Training, evaluation and the commands are in
+tools/server_detector.py.
 
-    python server_detector.py evaluate     # all tests on the exports; report to data/reports/
-    python server_detector.py train        # fit and save data/models/server_detector.joblib
-    python server_detector.py detect --tickets data\test_tickets.jsonl            # rows: ticket_id, detected_servers
-    python server_detector.py detect --tickets data\test_tickets.jsonl --write    # a copy of each ticket with detected_servers
+    python -m tools.server_detector evaluate                                          # all tests on the exports; report to data/reports/
+    python -m tools.server_detector train                                             # fit and save data/models/server_detector.joblib
+    python -m tools.server_detector detect --tickets data\test_tickets.jsonl          # rows: ticket_id, detected_servers
+    python -m tools.server_detector detect --tickets data\test_tickets.jsonl --write  # a copy of each ticket with detected_servers
+
+A model saved before the package split names its classes by the old module
+path and no longer loads; `python -m tools.convert_model` rewrites
+data/models/server_detector.joblib in place (the original is kept as
+server_detector.before-package.joblib) without changing the model.
 
 Options: --train, --test, --host-threshold, --instance-threshold (default:
 best F1 on a 20% validation split of the training file), --seed,
@@ -264,7 +291,7 @@ best F1 on a 20% validation split of the training file), --seed,
 detect --tickets, --output (default data/<tickets>-servers.jsonl) and --write.
 detect never changes the source file. The viewer shows `detected_servers` in
 its own card (kind, host, instance, status, score) when a ticket has them, so
-`python view_tickets.py --tickets data\test_tickets-servers.jsonl` after
+`python -m tools.view_tickets --tickets data\test_tickets-servers.jsonl` after
 `detect --write` shows the results.
 
 Each detection is `{text, field, start, end, kind, host, instance, status,
@@ -356,10 +383,10 @@ own dw_servers and alert fields.
 
 ### Trying the model by hand
 
-    python detector_ui.py --open      # http://127.0.0.1:8765/
+    python -m tools.detector_ui --open      # http://127.0.0.1:8765/
 
-`detector_ui.py` serves a page, on 127.0.0.1 by default, for testing the saved model
-(run `server_detector.py train` first). Paste text, optionally pick the client
+`tools/detector_ui.py` serves a page, on 127.0.0.1 by default, for testing the saved model
+(run `python -m tools.server_detector train` first). Paste text, optionally pick the client
 whose known names apply, and press Analyze (Ctrl+Enter); or give a Zendesk
 ticket URL or number and press Fetch and analyze, which reads that ticket's
 subject and description (the first comment) and organization with the
@@ -375,10 +402,10 @@ The Taxonomy tab (`#taxonomy`) lists the types and intents with their
 definitions, Claude's sample label counts, the alert tickets the alert-name
 table maps to each type, and the rules for choosing the primary type. The
 Classify ticket tab (`#classify`) applies the taxonomy to pasted text locally
-with `ticket_types.py`: a parsed alert takes its type from the alert-name
+with `ticket_analysis/ticket_types.py`: a parsed alert takes its type from the alert-name
 table in data/claude_pack/returned/taxonomy_notes.md (and intent
 fix_incident, or provide_information when it says the condition cleared);
-anything else goes to the keyword rules in `type_rules.py` (a [Log on to ...]
+anything else goes to the keyword rules in `ticket_analysis/type_rules.py` (a [Log on to ...]
 task, a Validation Results report, a single-area SIP review, a client access
 request), which read the text with email boilerplate removed, and then to
 TF-IDF and logistic regression trained on Claude's 600 sample labels. A model
@@ -386,14 +413,14 @@ type below 30% probability, or within 5 points of the second, is marked
 uncertain with the reason; in cross-validation those tickets are right about
 27% of the time against about 89% for the rest. The How types are chosen tab
 (`#how-types`) walks through these steps. The model is trained on first start and saved to
-data/models/ticket_types.joblib; `python ticket_types.py train` refits it. Text and tickets stay in memory and on the page; the
+data/models/ticket_types.joblib; `python -m tools.ticket_types train` refits it. Text and tickets stay in memory and on the page; the
 console logs request paths only. Options: --port, --model-path, --train (read
 for client names) and --open.
 
 ### Hand labeling by several DBAs
 
-    python detector_ui.py --host 0.0.0.0     # serve the network; DBAs open http://<this machine>:8765/#label
-    python server_labels.py evaluate         # score the saved model against the labels
+    python -m tools.detector_ui --host 0.0.0.0  # serve the network; DBAs open http://<this machine>:8765/#label
+    python -m tools.server_labels evaluate      # score the saved model against the labels
 
 The page's Label tab hands out a fixed, seeded sample of tickets (200 human
 tickets from data/test_tickets.jsonl by default) for DBAs to mark every host,
@@ -416,7 +443,7 @@ addresses as Host headers; add a DNS alias with `--allow-host`. Options:
 --label-tickets, --label-sample, --label-kind (human, alerts, all),
 --label-overlap, --label-seed and --labels-path.
 
-`server_labels.py evaluate` scores the saved model on one label per ticket
+`python -m tools.server_labels evaluate` scores the saved model on one label per ticket
 (the first labeler's): precision, recall, and recall split by whether the
 directory already knew the name, which is the measure the derived labels
 cannot give, plus results per rule and for the model, bare-instance pairing
@@ -453,10 +480,10 @@ NotImplementedError and documents the expected API shape.
 
 ## Labeling
 
-`report.py` creates or updates data/labels.csv with the predicted values and
+`tools/report.py` creates or updates data/labels.csv with the predicted values and
 empty columns: correct_type, correct_intent, mentions_correct (y/n/partial),
-notes. Fill them in Excel using the ids in taxonomy.json, and close the file
-before the next run. The next `report.py` run computes accuracy, a confusion
+notes. Fill them in Excel using the ids in ticket_analysis/taxonomy.json, and close the file
+before the next run. The next `python -m tools.report` run computes accuracy, a confusion
 matrix, and per-class precision and recall. Existing human entries are never
 overwritten. Reports are written to data/reports/.
 
@@ -467,37 +494,39 @@ full 600 (cross-validated type accuracy 57% with 120 training tickets, 66% with
 240, 72% with 360, 74% with 480), so more labels should help. Without API
 access, they come in rounds through Claude Desktop:
 
-    python claude_pack.py types                # writes data\claude_pack\types\round_NNN\
-    python claude_pack.py import-types data\claude_pack\returned\types_round_NNN_*.jsonl
-    python ticket_types.py train               # or restart detector_ui.py, which refits on newer labels
-    python baseline.py --labels data\claude_pack\returned\taxonomy_sample_labels.jsonl data\labels\claude_types.jsonl
+    python -m tools.claude_pack types   # writes data\claude_pack\types\round_NNN\
+    python -m tools.claude_pack import-types data\claude_pack\returned\types_round_NNN_*.jsonl
+    python -m tools.ticket_types train  # or restart the detector UI, which refits on newer labels
+    python -m tools.baseline --labels data\claude_pack\returned\taxonomy_sample_labels.jsonl data\labels\claude_types.jsonl
 
 A round picks unlabeled human tickets from the training and test exports
 (--tickets, 500), never one already labeled or sent in an earlier round. Half
 (--weak-share) are the tickets the current model leans most toward a weak type
 (database_refresh, engine_errors, data_request_query, configuration_change,
 install_migrate_upgrade) and the rest are random. Each ticket is cleaned of
-email boilerplate (text_clean.py), masked, cut at --max-chars (4,000) and
+email boilerplate (ticket_analysis/text_clean.py), masked, cut at --max-chars (4,000) and
 written in batches of 50 with a manifest and prompt.md, which is built from
-taxonomy.json and the prompt v2 rules. Follow prompt.md: one Claude Desktop
+ticket_analysis/taxonomy.json and the prompt v2 rules. Follow prompt.md: one Claude Desktop
 Project with the prompt as its instructions, one chat per batch. import-types
 checks every returned line (known ticket, type, intent and confidence),
 appends it to data/labels/claude_types.jsonl with its round, batch and
 taxonomy version, skips repeats, and lists tickets still missing per batch.
-ticket_types.py trains on the taxonomy sample and these labels together, later
+tools/ticket_types.py trains on the taxonomy sample and these labels together, later
 labels winning, and leaves out labels made for another taxonomy version. Keep
 the evaluation export out of the rounds so it stays an independent test.
 
 ## Files that carry forward to Keystone
 
-- taxonomy.json: versioned type and intent lists. v1-draft (20 types, 7
+- ticket_analysis/taxonomy.json: versioned type and intent lists. v1-draft (20 types, 7
   intents) was proposed by Claude from a digest of all 12,000 tickets
   (docs/claude-taxonomy-prompt.md) and awaits team review; its notes, with
   the Zendesk category and alert name mappings, are in
   data/claude_pack/returned/taxonomy_notes.md. taxonomy_v0.json keeps the
   earlier draft for comparison.
 - prompts/classify_v*.md: versioned system prompts and user message templates
-- schema.py: output schema generated from the taxonomy
+- ticket_analysis/taxonomy.py: the type and intent enums and the output schema,
+  generated from the taxonomy; tools/schema.py turns it into the form the
+  structured outputs API accepts
 - data/labels.csv: the start of the evaluation set (contains client data;
   move it only into approved storage)
 
@@ -505,7 +534,8 @@ the evaluation export out of the rounds so it stays an independent test.
 
 - Never commit .env or data/. Both are gitignored.
 - Do not store this folder in OneDrive or any synced location.
-- Delete data/ when the PoC ends unless the labels move into Keystone.
+- Keep data/ only on approved machines: the tickets, labels and models in it
+  contain client data and move only into approved storage.
 - Obvious secrets (passwords, connection-string credentials, bearer tokens,
   private keys, meeting passcodes and PINs, Teams join-link passcodes) are
   masked before any text is sent to the model.

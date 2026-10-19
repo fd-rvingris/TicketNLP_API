@@ -8,7 +8,7 @@ in taxonomy.json.
 
 1. Prepare the digest (already done once):
 
-       python claude_pack.py taxonomy
+       python -m tools.claude_pack taxonomy
 
    This writes data/claude_pack/taxonomy/ (about 1.1 MB, secrets masked):
 
@@ -24,7 +24,7 @@ in taxonomy.json.
    five files directly to the message (not as project knowledge, so they are
    read in full rather than searched), and paste everything under "Prompt"
    below. If Claude says the files are too large, rerun with
-   `python claude_pack.py taxonomy --sample 300 --sample-chars 500`.
+   `python -m tools.claude_pack taxonomy --sample 300 --sample-chars 500`.
 
 3. Claude returns three files. Save them as:
 
@@ -34,10 +34,10 @@ in taxonomy.json.
 
 4. Check the taxonomy's shape:
 
-       python claude_pack.py check-taxonomy data/claude_pack/returned/taxonomy_v1.json
+       python -m tools.claude_pack check-taxonomy data/claude_pack/returned/taxonomy_v1.json
 
    Review it with the team before it replaces taxonomy.json. A new taxonomy
-   version changes classify.py's prompt and schema, so earlier runs are no
+   version changes tools/classify.py's prompt and schema, so earlier runs are no
    longer comparable.
 
 Check with your organization that client ticket text may be used in Claude
