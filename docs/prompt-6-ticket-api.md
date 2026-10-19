@@ -9,7 +9,8 @@ Expose the server detector and the taxonomy classifier as a JSON HTTP API that c
 Container Apps, with an OpenAPI (OAS 3.1) document checked into the repo. Callers send ticket text
 with an optional subject and an optional Zendesk organization id; the API returns detected servers
 and instances as key/value pairs, the taxonomy type and intent, or both. The API imports only the
-ticket_analysis package (never tools/) and its image installs only requirements.txt.
+ticket_analysis package (never tools/), and its image installs only requirements-api.txt
+(requirements.txt plus the web and MCP dependencies).
 
 Decisions already made:
 
@@ -61,8 +62,10 @@ ticket_analysis/masking.py (`mask_secrets()`), tests/conftest.py.
 
 - Python is .venv\Scripts\python.exe (3.14). Run tests with
   `.venv\Scripts\python.exe -m pytest -q -W error::SyntaxWarning`.
-- Add FastAPI and Uvicorn to requirements.txt with exact pinned versions that support Python 3.14.
-  Pydantic 2 is already pinned.
+- Create requirements-api.txt: `-r requirements.txt` plus FastAPI, Uvicorn and the MCP Python SDK,
+  with exact pinned versions that support Python 3.14. Leave requirements.txt as the package's own
+  dependencies (Pydantic 2 and scikit-learn are already pinned there), and add requirements-api.txt
+  to requirements-tools.txt so local test runs have everything.
 - The Bash tool is Git Bash, and its heredocs collapse `\\` to `\`. Write any file containing
   backslashes with the Write or Edit tool.
 
@@ -73,14 +76,18 @@ ticket_analysis/masking.py (`mask_secrets()`), tests/conftest.py.
 A small module with no HTTP code that loads the models once and exposes `detect()`, `classify()`
 and `analyze()`. Reuse the existing functions rather than copying logic:
 
-- Detection: build the ticket with `detector_ui.ticket_for_text()` (zendeskOrgId becomes the client
-  key; an unknown or missing id means no client's known names apply) and call
-  `server_detector.detect_servers()`. Use the model's saved thresholds; do not accept thresholds in
-  requests.
-- Taxonomy: `ticket_types.classify()` with the saved model and alert map. The API must never train
-  a model: if a model file is missing or does not match the taxonomy version, the service is not
-  ready (see /ready). Move any shared helpers out of tools/detector_ui.py into ticket_analysis rather than importing the UI's
-  web server.
+- First move `ticket_for_text()` and the result shaping in `analyze()` from tools/detector_ui.py
+  into the package (for example ticket_analysis/analysis.py), and have the detector UI import them
+  from there, so the UI and the API share one implementation and the API never imports tools/.
+  Do the same for any other helper both need. Existing tests must pass unchanged apart from imports.
+- Detection: build the ticket with the moved `ticket_for_text()` (zendeskOrgId becomes the client
+  key; an unknown or missing id means no client's known names apply), load the bundle with
+  `ticket_analysis.server_detector.load_model()` and call `detect_servers()`. Use the model's saved
+  thresholds; do not accept thresholds in requests.
+- Taxonomy: load the bundle with `ticket_analysis.ticket_types.load_model()` and call `classify()`
+  with it and `load_alert_map()`. The API must never train a model, so never call
+  `tools.ticket_types.load_or_train()`: if a model file is missing or does not match the taxonomy
+  version, the service is not ready (see /ready).
 - Joblib files are pickles: load only from the configured model directory, and when
   `MODEL_SHA256` values are configured, refuse files whose hash does not match.
 
@@ -208,7 +215,8 @@ tools call the service layer directly, not the HTTP API.
   `taxonomyVersion`.
 - Model files live in the store under a version folder (`models/<version>/`); `MODEL_VERSION` selects
   one, so a retrained model is rolled out or rolled back by changing a setting and starting a new
-  Container Apps revision. Automatic quarterly retraining is out of scope; describe in
+  Container Apps revision. A detector model saved before the package split names its classes
+  `server_detector.*` and does not load; run `python -m tools.convert_model` on it before uploading. Automatic quarterly retraining is out of scope; describe in
   docs/azure-deploy.md where it would plug in (a scheduled job that retrains, evaluates against a
   holdout and publishes a new version folder only if it is not worse).
 
@@ -255,8 +263,9 @@ and `MCP_ENABLED`. Nothing defaults to a path under data/ except for local runs.
 
 ### 7. Container and Azure
 
-- Dockerfile: python:3.14-slim, non-root user, only the code the API needs (no data/, no tests),
-  listening on port 8000, `HEALTHCHECK` on /health.
+- Dockerfile: python:3.14-slim, non-root user, copying only ticket_analysis/, api/,
+  requirements.txt and requirements-api.txt (no tools/, data/, tests/ or docs/) and installing
+  requirements-api.txt, listening on port 8000, `HEALTHCHECK` on /health.
 - docs/azure-deploy.md: step-by-step `az` CLI instructions, not run in this session, for a resource
   group, Container Registry, Container Apps environment with Log Analytics, the app with a
   system-assigned managed identity, Key Vault for API keys and CMDB credentials, a private Blob
