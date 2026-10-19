@@ -6,7 +6,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 BLOCKED = ("anthropic", "dotenv", "requests", "tools")
-EXPECTED = {"paths", "jsonl", "tickets", "masking", "names", "taxonomy", "alert_parser", "type_rules", "text_clean"}
+EXPECTED = {"paths", "jsonl", "tickets", "masking", "names", "taxonomy", "alert_parser", "type_rules", "text_clean",
+            "ticket_types"}
 
 
 def package_modules() -> list[str]:
@@ -49,3 +50,14 @@ def test_parsing_and_cleaning_run_without_the_tools():
             "print(clean_text(t['subject'], t['description'])[1])\n")
     out = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
+
+
+def test_type_classification_runs_without_the_tools():
+    code = ("import sys\n"
+            f"for name in {BLOCKED!r}:\n"
+            "    sys.modules[name] = None\n"
+            "from ticket_analysis.ticket_types import features\n"
+            "print(features([{'subject': 'Made up', 'description': 'text'}], 100).shape)\n")
+    out = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "(1, 2)"

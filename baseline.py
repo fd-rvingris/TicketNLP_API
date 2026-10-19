@@ -22,6 +22,7 @@ from sklearn.pipeline import Pipeline
 
 from common import DATA_DIR, REPORTS_DIR, fmt_pct, md_table, now_iso, read_jsonl
 from ticket_analysis.text_clean import clean_text
+from ticket_analysis.ticket_types import features
 from ticket_analysis.type_rules import RULES, apply_rules
 
 OTHER = "(merged rare)"  # not "Other", which is a real Zendesk category
@@ -99,20 +100,6 @@ def redundancy(tickets: list[dict], a: str, b: str) -> dict:
 
 
 # --- Model -----------------------------------------------------------------
-
-
-def features(tickets: list[dict], max_chars: int, clean: bool = False) -> np.ndarray:
-    """Two text columns, subject and description, as a 2-D object array. With clean, email boilerplate
-    is removed first (text_clean.py); ticket_types.py scores with the same setting it trained with.
-    Off by default: on Claude's 600 labels, averaged over five cross-validation seeds, cleaning lowered
-    type accuracy from 74.5% to 73.8%."""
-    rows = []
-    for t in tickets:
-        subject, desc = t.get("subject") or "", t.get("description") or ""
-        if clean:
-            subject, desc = clean_text(subject, desc)
-        rows.append([subject, desc[:max_chars]])
-    return np.array(rows, dtype=object).reshape(len(rows), 2)
 
 
 def build_model(seed: int) -> Pipeline:

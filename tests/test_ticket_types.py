@@ -1,6 +1,7 @@
 """Local taxonomy classification tests. All tickets and alerts are made up."""
 
-import ticket_types as tt
+import ticket_analysis.ticket_types as tt
+import tools.ticket_types as ttt
 from common import make_ticket
 from tests.test_alert_parser import COLLECTOR
 
@@ -46,7 +47,7 @@ def test_alert_map_reads_only_the_alert_section(tmp_path):
 
 
 def test_classify_uses_the_model_for_human_tickets():
-    bundle = tt.train(*labeled())
+    bundle = ttt.train(*labeled())
     r = tt.classify("Disk space low", "disk space low on the data drive, volume nearly full", bundle, {})
     assert (r["primary_type"], r["type_source"], r["intent"]) == ("capacity_storage", "model", "fix_incident")
     assert r["alert"] is None and len(r["type_candidates"]) == 3
@@ -56,7 +57,7 @@ def test_classify_uses_the_model_for_human_tickets():
 def test_classify_uses_the_alert_table_and_the_alert_intent_rule(tmp_path):
     path = tmp_path / "notes.md"
     path.write_text(NOTES, encoding="utf-8")
-    bundle, m = tt.train(*labeled()), tt.load_alert_map(path)
+    bundle, m = ttt.train(*labeled()), tt.load_alert_map(path)
     r = tt.classify("Example Client - Alert #42 - FD - SQL Agent Job Failure", COLLECTOR, bundle, m)
     assert (r["primary_type"], r["type_source"], r["intent"]) == ("scheduled_jobs", "alert_name_partly", "fix_incident")
     assert r["alert"]["alert_name"] == "FD - SQL Agent Job Failure" and r["notes"]
@@ -82,7 +83,7 @@ EMAIL_ACCESS = (
 
 
 def test_the_email_access_request_is_access_security_with_or_without_a_subject():
-    bundle = tt.train(*labeled())
+    bundle = ttt.train(*labeled())
     for subject in ("", "READ access request"):
         r = tt.classify(subject, EMAIL_ACCESS, bundle, {})
         assert (r["primary_type"], r["type_source"]) == ("access_security", "rule:access_request")
@@ -90,7 +91,7 @@ def test_the_email_access_request_is_access_security_with_or_without_a_subject()
 
 
 def test_a_rule_decides_ahead_of_the_model_but_not_ahead_of_the_alert_table(tmp_path):
-    bundle = tt.train(*labeled())
+    bundle = ttt.train(*labeled())
     r = tt.classify("[Log on to FAKESQL01]", "the nightly full backup failed", bundle, {})
     assert (r["primary_type"], r["type_source"]) == ("staff_access", "rule:staff_logon")
     path = tmp_path / "notes.md"
@@ -109,7 +110,7 @@ def test_uncertain_flag():
     assert flag and reason.startswith("low confidence: performance at 25%") and reason.endswith("check by hand")
     assert tt.uncertainty([{"id": "performance", "p": 0.8}, {"id": "capacity_storage", "p": 0.1}]) == (False, "")
     # the classify result carries the flag for model decisions
-    r = tt.classify("", "something unrelated entirely", tt.train(*labeled()), {})
+    r = tt.classify("", "something unrelated entirely", ttt.train(*labeled()), {})
     assert r["type_source"] == "model" and isinstance(r["uncertain"], bool) and "uncertain_reason" in r
 
 
@@ -124,7 +125,7 @@ def test_label_files_merge_with_later_files_winning_and_other_taxonomies_left_ou
          "taxonomy_version": tt.TAXONOMY_VERSION},
         {"ticket_id": "3", "primary_type": "performance", "intent": "fix_incident", "taxonomy_version": "v0"}]),
         encoding="utf-8")
-    labels = tt.current_labels([first, later, tmp_path / "missing.jsonl"])
+    labels = ttt.current_labels([first, later, tmp_path / "missing.jsonl"])
     assert {k: v["primary_type"] for k, v in labels.items()} == {"1": "access_security", "2": "performance"}
 
 
@@ -136,18 +137,18 @@ def test_load_or_train_refits_when_a_label_file_is_newer(tmp_path):
     path.write_text("\n".join(json.dumps(r) for r in labels.values()), encoding="utf-8")
     model = tmp_path / "m.joblib"
     logs = []
-    first = tt.load_or_train(model, [path], tickets=tickets, log=logs.append)
+    first = ttt.load_or_train(model, [path], tickets=tickets, log=logs.append)
     assert first["tickets"] == 36 and model.exists()
-    assert tt.load_or_train(model, [path], tickets=tickets, log=logs.append)["created_at"] == first["created_at"]
+    assert ttt.load_or_train(model, [path], tickets=tickets, log=logs.append)["created_at"] == first["created_at"]
     later = model.stat().st_mtime + 10
     os.utime(path, (later, later))
-    tt.load_or_train(model, [path], tickets=tickets, log=logs.append)
+    ttt.load_or_train(model, [path], tickets=tickets, log=logs.append)
     assert any("newer labels" in m for m in logs)
 
 
 def test_summary_lists_taxonomy_counts_and_rules():
-    s = tt.summary(tt.train(*labeled()), {("collector", "x"): {"type": "performance", "tickets": 7}})
+    s = ttt.summary(ttt.train(*labeled()), {("collector", "x"): {"type": "performance", "tickets": 7}})
     types = {t["id"]: t for t in s["types"]}
     assert types["backup_restore"]["sample"] == 12 and types["performance"]["alert_tickets"] == 7
     assert s["rules"] and all(r for r in s["rules"])
-    assert len(s["types"]) == len(tt.TAXONOMY["types"])
+    assert len(s["types"]) == len(ttt.TAXONOMY["types"])

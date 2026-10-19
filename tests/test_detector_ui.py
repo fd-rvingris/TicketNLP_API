@@ -161,12 +161,12 @@ def test_page_explains_the_layers_with_a_made_up_example():
 
 def test_taxonomy_and_classify_routes():
     import pytest
-    import ticket_types as tt
+    import tools.ticket_types as ttt
     from tests.test_ticket_types import labeled
     a = app()
     with pytest.raises(ValueError):  # no type model loaded
         a.classify_text({"text": "x"})
-    a.types = tt.train(*labeled())
+    a.types = ttt.train(*labeled())
     assert a.taxonomy({})["sample_tickets"] == 36
     r = a.classify_text({"subject": "Disk", "text": "disk space low on the data drive"})
     assert r["primary_type"] == "capacity_storage"

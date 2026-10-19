@@ -29,11 +29,12 @@ from pathlib import Path
 
 import server_detector as sd
 import server_labels as sl
-from baseline import features, read_labels
+from baseline import read_labels
+from ticket_analysis.ticket_types import features
 from common import DATA_DIR, mask_secrets, now_iso, read_jsonl, write_jsonl
 from schema import TAXONOMY, TAXONOMY_PATH, TAXONOMY_VERSION
 from ticket_analysis.text_clean import clean_text
-from ticket_types import CLAUDE_TYPES_PATH, LABEL_PATHS, load_or_train, prompt_rules
+from tools.ticket_types import CLAUDE_TYPES_PATH, LABEL_PATHS, load_or_train, prompt_rules
 
 PACK_DIR = DATA_DIR / "claude_pack"
 CLAUDE_LABELS_PATH = DATA_DIR / "labels" / "claude_spans.jsonl"

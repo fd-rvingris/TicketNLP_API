@@ -28,7 +28,8 @@ import requests
 
 import server_detector as sd
 import server_labels as sl
-import ticket_types as tt
+import ticket_analysis.ticket_types as tt
+import tools.ticket_types as ttt
 from ticket_analysis.alert_parser import alert_spans, parse_alert
 from common import DATA_DIR, ZendeskClient, load_env, make_ticket, now_iso, read_jsonl
 
@@ -332,13 +333,13 @@ class App:
     # --- Taxonomy ----------------------------------------------------------------
 
     def taxonomy(self, body: dict) -> dict:
-        return tt.summary(self.types, self.alert_map)
+        return ttt.summary(self.types, self.alert_map)
 
     def classify_text(self, body: dict) -> dict:
         """The taxonomy type and intent for pasted text: the alert-name table for alerts, else the
         local model. The text is not stored."""
         if not self.types:
-            raise ValueError(f"The Classify tab needs Claude's sample labels at {tt.LABELS_PATH}")
+            raise ValueError(f"The Classify tab needs Claude's sample labels at {ttt.LABELS_PATH}")
         text, subject = str(body.get("text") or ""), str(body.get("subject") or "")
         if not (text.strip() or subject.strip()):
             raise ValueError("Paste some text first")
@@ -505,7 +506,7 @@ def make_app(model_path: Path, train_path: Path, port: int, *, zendesk_mode: str
     tickets = [t for p in found for t in read_jsonl(p)]
     catalog = alert_catalog(tickets)
     print(f"Alert types: {len(catalog)} types from {', '.join(p.name for p in found) or 'no ticket files'}")
-    types = tt.load_or_train(types_path or tt.MODEL_PATH, tickets=tickets)
+    types = ttt.load_or_train(types_path or tt.MODEL_PATH, tickets=tickets)
     alert_map = tt.load_alert_map()
     print(f"Taxonomy {tt.TAXONOMY_VERSION}: {len(alert_map)} alert names in the alert table")
     return App(bundle, names, zendesk, subdomain, port, queue, allowed_hosts, catalog, types, alert_map)
