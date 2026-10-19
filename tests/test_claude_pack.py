@@ -84,6 +84,19 @@ def test_labels_from_label_files_relabel_the_same_tickets(tmp_path, monkeypatch)
     assert "Hunter2" not in rows[0]["description"]
 
 
+def test_labels_all_of_a_file_leave_out_labeled_tickets(tmp_path, monkeypatch):
+    from ticket_analysis.jsonl import write_jsonl
+    test, train = [human(1, "a")], [human(i, "on fakesql0%d" % i) for i in (2, 3, 4)]
+    labeled = tmp_path / "labeled.jsonl"
+    write_jsonl(labeled, [{"ticket_id": "3", "labeler": "claude"}])
+    monkeypatch.setattr(cp, "read_jsonl", lambda p: test if p.name == "test_tickets.jsonl" else
+                        train if p.name == "train_tickets.jsonl" else common_read(p))
+    out = tmp_path / "batches"
+    cp.main(["labels", "--all-of", "train", "--except-labels", str(labeled), str(tmp_path / "none.jsonl"),
+             "--out-dir", str(out)])
+    assert [r["ticket_id"] for r in common_read(out / "batch_001.jsonl")] == ["2", "4"]
+
+
 def test_check_reply_takes_the_last_code_block_and_checks_ticket_ids(tmp_path, capsys):
     from ticket_analysis.jsonl import write_jsonl
     batch = tmp_path / "batch_001.jsonl"

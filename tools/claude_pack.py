@@ -4,6 +4,7 @@
   python -m tools.claude_pack taxonomy     # data/claude_pack/taxonomy/ digest of every ticket, to upload
   python -m tools.claude_pack import-labels data/claude_pack/returned/*.jsonl
   python -m tools.claude_pack labels --from-labels data/labels/claude_spans.jsonl --out-dir DIR  # relabel those tickets
+  python -m tools.claude_pack labels --all-of train --except-labels data/labels/*.jsonl --out-dir DIR
   python -m tools.claude_pack check-reply REPLY.txt --batch DIR/batch_001.jsonl --out labels_001.jsonl
 
 tools/claude_relabel.ps1 runs the labeling batches through the Claude Code CLI, one fresh session per
@@ -85,7 +86,13 @@ def cmd_labels(args) -> None:
     train = read_jsonl(DATA_DIR / "train_tickets.jsonl")
     if not test:
         raise SystemExit("Missing data/test_tickets.jsonl")
-    if args.from_labels:
+    if args.all_of:
+        # Every ticket of one ticket file except those the given label files already cover
+        done = {str(r["ticket_id"]) for path in args.except_labels or [] for r in read_jsonl(path)
+                if r.get("ticket_id") is not None}
+        picked = [t for t in (train if args.all_of == "train" else test) if str(t["ticket_id"]) not in done]
+        print(f"{len(picked):,} tickets of {args.all_of}_tickets.jsonl not in the given label files")
+    elif args.from_labels:
         # The tickets of existing label files, in their order, to label them again
         by_id = {str(t["ticket_id"]): t for t in train + test}
         ids = list(dict.fromkeys(str(r["ticket_id"]) for path in args.from_labels for r in read_jsonl(path)
@@ -544,6 +551,9 @@ def parse_args(argv=None):
     lab.add_argument("--batch-tickets", type=int, default=25)
     lab.add_argument("--from-labels", type=Path, nargs="+",
                      help="label the tickets of these label files again instead of drawing a sample")
+    lab.add_argument("--all-of", choices=("train", "test"),
+                     help="every ticket of data/<train|test>_tickets.jsonl, less those in --except-labels")
+    lab.add_argument("--except-labels", type=Path, nargs="+", help="label files whose tickets --all-of leaves out")
     lab.add_argument("--out-dir", type=Path, help="default data/claude_pack/labels")
     rep = sub.add_parser("check-reply", help="check a labeling reply against its batch and write its rows")
     rep.add_argument("reply", type=Path, help="the reply as text, with the JSONL in a code block")

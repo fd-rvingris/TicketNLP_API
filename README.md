@@ -549,6 +549,15 @@ runs `python -m tools.server_labels evaluate`. Options: -Set test|holdout|all,
 batches, earlier replies discarded). Ticket text is masked as for Claude
 Desktop and sent to Claude under your Claude Code login.
 
+    .\tools\claude_label_all.ps1 -Limit 20   # the next 20 batches of the remaining tickets
+
+`tools/claude_label_all.ps1` (`claude_relabel.ps1 -Set rest`) labels every
+ticket the two sets above do not cover, about 11,600 in some 460 batches, into
+new files: data/labels/claude_spans_train_rest.jsonl (training data) and
+claude_spans_test_rest.jsonl (scored when done). After a failed call it waits
+longer each time, and it stops after three failed batches in a row, as when a
+usage limit is reached; a rerun resumes.
+
 ### More type labels from Claude Desktop
 
 The type model learns from Claude's labels. Accuracy was still rising at the
