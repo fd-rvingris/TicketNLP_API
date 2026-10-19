@@ -1,6 +1,3 @@
-anthropic==1.15.0
+# What the ticket_analysis package needs (the API image installs only this file).
 pydantic==2.14.1
-python-dotenv==1.2.4
-requests==2.34.2
-pytest==9.1.1
 scikit-learn==1.9.1
