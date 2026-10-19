@@ -59,7 +59,7 @@ def test_convert_keeps_a_trained_model_and_its_directory(tmp_path, monkeypatch):
     directory = sd.LocalServerDirectory.from_sources(tickets, None)
     model, _ = sdt.fit_config(tickets, directory, kind="logreg", alert_context="strip_labels", instance_model=False,
                               seed=0, max_chars=5000, neg_ratio=10)
-    probe = human(999, "Please restart FAKESQL01\REPORTS and check the FINANCE instance.", subject="Made up")
+    probe = human(999, r"Please restart FAKESQL01\REPORTS and check the FINANCE instance.", subject="Made up")
     expected = sd.detect_servers(probe, directory, model, host_threshold=0.5, instance_threshold=0.3)
     path = tmp_path / "server_detector.joblib"
     with monkeypatch.context() as m:
