@@ -12,7 +12,6 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 import anthropic
@@ -20,13 +19,15 @@ import requests
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
-from alert_parser import parse_alert
 from schema import OUTPUT_SCHEMA, TAXONOMY, TAXONOMY_VERSION, TicketClassification
+from ticket_analysis.jsonl import append_jsonl, now_iso, read_jsonl, write_jsonl  # noqa: F401
+from ticket_analysis.masking import (_PROMPT_TAGS, _SECRET_PATTERNS, PROMPT_TAG_REPLACEMENT, REDACTED,  # noqa: F401
+                                     mask_secrets, prepare_ticket_text)
+from ticket_analysis.names import Cmdb, Instance, ParsedName, load_cmdb, match_mention, parse_server_name  # noqa: F401
+from ticket_analysis.paths import DATA_DIR, INSTANCES_PATH, REPO_ROOT as ROOT  # noqa: F401
+from ticket_analysis.tickets import DW_FIELDS, STAFF_FIELDS, _flag, make_ticket  # noqa: F401
 
-ROOT = Path(__file__).parent
-DATA_DIR = ROOT / "data"
 TICKETS_PATH = DATA_DIR / "tickets.jsonl"
-INSTANCES_PATH = DATA_DIR / "instances.csv"
 LABELS_PATH = DATA_DIR / "labels.csv"
 RUNS_DIR = DATA_DIR / "runs"
 REPORTS_DIR = DATA_DIR / "reports"
@@ -62,99 +63,6 @@ def load_env() -> None:
     load_dotenv(ROOT / ".env")
 
 
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-# --- JSONL storage ---------------------------------------------------------
-
-
-def read_jsonl(path: Path) -> list[dict]:
-    rows = []
-    if not path.exists():
-        return rows
-    with path.open(encoding="utf-8") as f:
-        for n, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                print(f"warning: skipping unreadable line {n} in {path}")
-    return rows
-
-
-def write_jsonl(path: Path, rows: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-
-def append_jsonl(path: Path, row: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-
-def _flag(value) -> bool | None:
-    """Read a yes/no value from an export (1/0, true/false, yes/no); anything else is unknown."""
-    text = str(value).strip().lower() if value is not None else ""
-    return True if text in ("1", "true", "yes", "y") else False if text in ("0", "false", "no", "n") else None
-
-
-def _server_list(value) -> list[str]:
-    """A list of server names from a list or a ';'-separated string, blanks and repeats dropped."""
-    items = value if isinstance(value, list) else str(value or "").split(";")
-    return list(dict.fromkeys(s.strip() for s in items if str(s).strip()))
-
-
-STAFF_FIELDS = ["assignee_key", "status_assignee_keys", "team", "client_pod", "client_primary_dba"]
-# Zendesk ticket fields from DW2.0 (FactTickets.Platform and DimTicketAttributes), exported with a dw_ prefix
-# so they are not confused with the same names parsed from alert text.
-DW_FIELDS = ["platform", "severity", "priority", "impact", "complexity"]
-
-
-def _dw_fields(values: dict | None) -> dict:
-    values = values or {}
-    return {k: str(values[k]).strip() or None if values.get(k) not in (None, "") else None for k in DW_FIELDS}
-
-
-def _staff(staff: dict | None) -> dict:
-    """Who handled the ticket, from the DW2.0 export: DW2.0 assignee keys, team, and the client's
-    POD and primary DBA. Missing fields are None (status_assignee_keys is a list)."""
-    staff = staff or {}
-    out = {k: (str(staff.get(k)).strip() or None) if staff.get(k) not in (None, "") else None for k in STAFF_FIELDS}
-    out["status_assignee_keys"] = _server_list(staff.get("status_assignee_keys"))
-    return out
-
-
-def make_ticket(ticket_id, subject, description, *, organization_id=None, organization_name=None,
-                created_at=None, tags=None, weak_labels=None, source="", is_alert=None, dw_servers=None,
-                staff=None, dw_fields=None) -> dict:
-    """is_alert, dw_servers, staff and dw_fields come from the DW2.0 export (automated monitoring ticket,
-    servers with time logged against the ticket, who handled it, and Zendesk platform, severity, priority,
-    impact and complexity). alert_fields are parsed from an alert's text by alert_parser.py. All of them are
-    kept for review and reporting, never sent to the model."""
-    return {
-        "ticket_id": str(ticket_id).strip(),
-        "subject": subject or "",
-        "description": description or "",
-        "organization_id": str(organization_id).strip() if organization_id not in (None, "") else None,
-        "organization_name": organization_name or None,
-        "created_at": created_at or None,
-        "tags": list(tags or []),
-        "weak_labels": {k: v for k, v in (weak_labels or {}).items() if v not in (None, "", [])},
-        "is_alert": _flag(is_alert),
-        "dw_servers": _server_list(dw_servers),
-        "staff": _staff(staff),
-        "dw_fields": _dw_fields(dw_fields),
-        "alert_fields": parse_alert(subject or "", description or ""),
-        "source": source,
-    }
-
-
 def merge_tickets(new_tickets: list[dict], path: Path = TICKETS_PATH) -> tuple[int, int]:
     """Add or replace tickets by ticket_id. Returns (added, updated)."""
     existing = {t["ticket_id"]: t for t in read_jsonl(path)}
@@ -163,48 +71,6 @@ def merge_tickets(new_tickets: list[dict], path: Path = TICKETS_PATH) -> tuple[i
         existing[t["ticket_id"]] = t
     write_jsonl(path, list(existing.values()))
     return added, len(new_tickets) - added
-
-
-# --- Secret masking --------------------------------------------------------
-
-REDACTED = "[REDACTED]"
-_SECRET_PATTERNS = [
-    # PEM private key blocks (RSA, EC, OPENSSH, ENCRYPTED, ...)
-    (re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.S),
-     "[REDACTED PRIVATE KEY]"),
-    # Credentials embedded in a URL: scheme://user:password@host
-    (re.compile(r"(\b[a-z][a-z0-9+.\-]*://[^\s:/@]+):[^\s@/]+@", re.I), rf"\1:{REDACTED}@"),
-    # Bearer tokens (16+ characters, so ordinary prose such as "the bearer of" is left alone)
-    (re.compile(r"\b(bearer)\s+[A-Za-z0-9\-._~+/]{16,}=*", re.I), rf"\1 {REDACTED}"),
-    # Passcode carried in a Teams meeting join link
-    (re.compile(r"(teams\.microsoft\.com/meet/\d+\?p=)[A-Za-z0-9]+", re.I), rf"\1{REDACTED}"),
-    # key=value and key: value secrets, including connection-string keys and meeting passcodes
-    (re.compile(r"""\b(password|passwd|pwd|passcode|pin|accountkey|sharedaccesskey|client_secret)(["']?\s*[=:]\s*)"""
-                r"""("[^"]*"|'[^']*'|\{[^}]*\}|[^\s;,"']+)""", re.I), rf"\1\2{REDACTED}"),
-]
-
-
-def mask_secrets(text: str) -> tuple[str, int]:
-    """Mask obvious secrets. Returns the masked text and the number of masks applied."""
-    total = 0
-    for pattern, replacement in _SECRET_PATTERNS:
-        text, n = pattern.subn(replacement, text)
-        total += n
-    return text, total
-
-
-_PROMPT_TAGS = re.compile(r"<(/?)(ticket|subject|description|client_servers)\b", re.I)
-PROMPT_TAG_REPLACEMENT = r"<\1 \2"
-
-
-def prepare_ticket_text(ticket: dict) -> tuple[str, str, int]:
-    """Mask secrets and break any of our delimiter tags inside the ticket text.
-    Returns (subject, description, secrets_masked)."""
-    subject, n1 = mask_secrets(ticket.get("subject") or "")
-    description, n2 = mask_secrets(ticket.get("description") or "")
-    subject = _PROMPT_TAGS.sub(PROMPT_TAG_REPLACEMENT, subject)
-    description = _PROMPT_TAGS.sub(PROMPT_TAG_REPLACEMENT, description)
-    return subject, description, n1 + n2
 
 
 # --- Prompt ----------------------------------------------------------------
@@ -249,101 +115,8 @@ def render_user_message(prompt: Prompt, subject: str, description: str, client_s
     })
 
 
-# --- CMDB instances and matching -------------------------------------------
-
-_IPV4 = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
-
-
-@dataclass(frozen=True)
-class ParsedName:
-    host: str
-    instance: str | None
-    port: str | None
-
-
-def parse_server_name(name: str) -> ParsedName | None:
-    """Normalize a server reference: lower case, drop a tcp: prefix, split
-    HOST,PORT and HOST\\INSTANCE, and strip the domain from an FQDN."""
-    s = name.strip().strip("[]\"'`").strip().lower()
-    if s.startswith("tcp:"):
-        s = s[4:]
-    port = None
-    if "," in s:
-        s, _, p = s.partition(",")
-        port = p.strip() if p.strip().isdigit() else None
-    host, _, instance = s.partition("\\")
-    host = host.strip()
-    if not _IPV4.match(host):
-        host = host.split(".", 1)[0]
-    if not host:
-        return None
-    return ParsedName(host, instance.strip() or None, port)
-
-
-@dataclass(frozen=True)
-class Instance:
-    server_name: str
-    parsed: ParsedName
-    environment: str
-
-
-@dataclass
-class Cmdb:
-    by_org: dict[str, list[Instance]]
-    by_client: dict[str, list[Instance]]
-
-    def for_ticket(self, ticket: dict) -> list[Instance]:
-        """Instances of the ticket's own client only, by Zendesk org id, then by client name."""
-        org = ticket.get("organization_id")
-        if org and org in self.by_org:
-            return self.by_org[org]
-        return self.by_client.get((ticket.get("organization_name") or "").strip().lower(), [])
-
-
-def load_cmdb(path: Path = INSTANCES_PATH) -> Cmdb:
-    cmdb = Cmdb({}, {})
-    if not path.exists():
-        return cmdb
-    with path.open(encoding="utf-8-sig", newline="") as f:
-        for row in csv.DictReader(f):
-            name = (row.get("server_name") or "").strip()
-            parsed = parse_server_name(name) if name else None
-            if not parsed:
-                continue
-            inst = Instance(name, parsed, (row.get("environment") or "").strip())
-            org = (row.get("zendesk_organization_id") or "").strip()
-            client = (row.get("client_name") or "").strip().lower()
-            if org:
-                cmdb.by_org.setdefault(org, []).append(inst)
-            if client:
-                cmdb.by_client.setdefault(client, []).append(inst)
-    return cmdb
-
-
 def client_server_hints(instances: list[Instance]) -> list[str]:
     return sorted({i.server_name for i in instances}, key=str.lower)[:MAX_CLIENT_SERVER_HINTS]
-
-
-def match_mention(text: str, instances: list[Instance]) -> dict:
-    """Match one mention against the client's instances.
-
-    Same host is required. A named instance matches that instance, or else the
-    host-level record; a bare host matches the host-level record, or else every
-    instance on that host. One distinct server_name is "matched", several are
-    "ambiguous", none is "unmatched". Ports are ignored.
-    """
-    parsed = parse_server_name(text)
-    names: list[str] = []
-    if parsed:
-        same_host = [i for i in instances if i.parsed.host == parsed.host]
-        host_level = [i for i in same_host if i.parsed.instance is None]
-        if parsed.instance:
-            pick = [i for i in same_host if i.parsed.instance == parsed.instance] or host_level
-        else:
-            pick = host_level or same_host
-        names = sorted({i.server_name for i in pick})
-    status = "unmatched" if not names else "matched" if len(names) == 1 else "ambiguous"
-    return {"status": status, "server_names": names}
 
 
 # --- Evidence quotes -------------------------------------------------------

@@ -31,7 +31,7 @@ import server_detector as sd
 import server_labels as sl
 from baseline import features, read_labels
 from common import DATA_DIR, mask_secrets, now_iso, read_jsonl, write_jsonl
-from schema import TAXONOMY, TAXONOMY_VERSION
+from schema import TAXONOMY, TAXONOMY_PATH, TAXONOMY_VERSION
 from text_clean import clean_text
 from ticket_types import CLAUDE_TYPES_PATH, LABEL_PATHS, load_or_train, prompt_rules
 
@@ -355,7 +355,7 @@ def cmd_taxonomy(args) -> None:
                "alert_family": Counter((t.get("alert_fields") or {}).get("family") or "unparsed"
                                        for t in alerts).most_common()}
     (out_dir / "label_counts.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False), encoding="utf-8")
-    (out_dir / "taxonomy_v0.json").write_text((Path(__file__).parent / "taxonomy.json").read_text(encoding="utf-8"),
+    (out_dir / "taxonomy_v0.json").write_text(TAXONOMY_PATH.read_text(encoding="utf-8"),
                                               encoding="utf-8")
     sizes = {p.name: p.stat().st_size for p in sorted(out_dir.iterdir())}
     print(f"{len(tickets):,} tickets ({len(human):,} human, {len(alerts):,} alerts) digested into {out_dir}:")
