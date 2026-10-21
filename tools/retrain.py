@@ -63,12 +63,14 @@ SPAN_SETS = [("test", DATA_DIR / "labels" / "claude_spans.jsonl", DATA_DIR / "te
 RULE_MIN_FIRES, RULE_MIN_PRECISION = 5, 0.90
 
 
-def new_version(root: Path, now: datetime) -> str:
-    """The UTC date, with -2, -3 and so on when that version already exists."""
+def new_version(root: Path, now: datetime, store=None) -> str:
+    """The UTC date, with -2, -3 and so on when that version already exists in root or in the store."""
     base, n = now.strftime("%Y-%m-%d"), 1
-    while (root / (base if n == 1 else f"{base}-{n}")).exists():
+    while True:
+        version = base if n == 1 else f"{base}-{n}"
+        if not (root / version).exists() and not (store and store.list(f"models/{version}")):
+            return version
         n += 1
-    return base if n == 1 else f"{base}-{n}"
 
 
 def run(*args: str) -> None:
@@ -106,7 +108,8 @@ def span_scores(bundle: dict, sets=SPAN_SETS) -> dict[str, dict]:
             dets = [d for d in r["detections"] if d["cls"] == cls]
             spans = [s for s in r["spans"] if s["cls"] == cls]
             p, rec = _ratio(sum(d["correct"] for d in dets), len(dets)), _ratio(sum(s["found"] for s in spans), len(spans))
-            f1 = 2 * p * rec / (p + rec) if p and rec else (0.0 if p is not None and rec is not None else None)
+            # With spans to find, no detections is an F1 of 0, not "unknown": the gate must see it
+            f1 = None if rec is None else 2 * p * rec / (p + rec) if p and rec else 0.0
             out[f"{name} {cls}"] = {"precision": p, "recall": rec, "f1": f1, "spans": len(spans), "detections": len(dets)}
     return out
 
@@ -202,7 +205,11 @@ def parse_args(argv=None):
 def main(argv=None) -> int:
     args = parse_args(argv)
     now = datetime.now(timezone.utc)
-    version = new_version(args.versions_dir, now)
+    store = None
+    if args.store:
+        from api.storage import open_store
+        store = open_store(args.store)
+    version = new_version(args.versions_dir, now, store)
     work = args.work_dir / version
     work.mkdir(parents=True, exist_ok=True)
     print(f"Retraining version {version} in {work}", flush=True)

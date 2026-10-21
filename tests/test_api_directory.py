@@ -298,3 +298,10 @@ def test_local_store_errors_are_store_errors(tmp_path):
         store.write("directory-20261019T000000Z.json", b"{}")
     with pytest.raises(StoreError):
         store.read("missing.json")
+
+
+def test_a_snapshot_time_without_a_timezone_is_refused(tmp_path):
+    snapshot = build_snapshot(csv_source(tmp_path), model_directory())
+    snapshot["createdAt"] = "2026-10-19T06:00:00"
+    with pytest.raises(SnapshotError, match="createdAt"):
+        parse_snapshot(encode(snapshot))

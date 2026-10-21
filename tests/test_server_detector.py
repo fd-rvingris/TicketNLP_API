@@ -582,3 +582,23 @@ def test_grafana_master_host_is_an_alert_server():
     found = sd.detect_servers(t, sd.LocalServerDirectory.from_sources([], None), rules_only_model())
     assert {(x["text"], x["rule"]) for x in found} == {("fakemaria1.corp.test", "host:alert_field"),
                                                       ("10.20.30.40", "host:alert_field")}
+
+
+def test_knowledge_survives_its_entry_being_forgotten_meanwhile():
+    class Forgetful(dict):  # forget_knowledge() on another thread, between the insert and the read
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            self.pop(key)
+    d = sd.LocalServerDirectory()
+    m = sd.ServerModel()
+    m._know = Forgetful()
+    assert m.knowledge(d).directory is d
+
+
+def test_the_knowledge_cache_is_bounded(monkeypatch):
+    monkeypatch.setattr(sd, "KNOWLEDGE_CACHE_LIMIT", 10)
+    _, know = know_for([human(1, "FAKESQL01 is down", dw=["FAKESQL01"])])
+    for i in range(50):
+        know.profile_features("100", "host", f"FAKEHOST{i:02d}")
+        know.near_known_host("100", f"FAKEHOST{i:02d}")
+    assert len(know._cache) <= 10

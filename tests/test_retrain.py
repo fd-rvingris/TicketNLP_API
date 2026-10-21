@@ -76,3 +76,35 @@ def test_a_failing_run_publishes_nothing_and_exits_1(tmp_path, monkeypatch):
     assert not (serving / "versions").exists() and (serving / rt.SERVER_FILE).read_bytes() == b"serving"
     work = next((tmp_path / "retrain").iterdir())
     assert json.loads((work / rt.METRICS_FILE).read_text(encoding="utf-8"))["gate"]["passed"] is False
+
+
+def test_a_model_that_detects_nothing_scores_f1_zero_and_fails_the_gate(monkeypatch):
+    spans = [{"cls": "host", "found": False}] * 10
+    monkeypatch.setattr(rt.sl, "load_labels", lambda p: {"1": []})
+    monkeypatch.setattr(rt, "read_jsonl", lambda p: [])
+    monkeypatch.setattr(rt.sl, "evaluate_labels", lambda labels, tickets, bundle: {"detections": [], "spans": spans})
+    scores = rt.span_scores({}, sets=[("test", "labels.jsonl", "tickets.jsonl")])
+    assert scores["test host"]["f1"] == 0.0
+    assert scores["test instance"]["f1"] is None  # no instance spans: nothing to score
+    assert rt.gate(scores, server(0.9), types(), types(), 1.0) == ["server test host F1 0.0% is below the serving 90.0%"]
+
+
+def test_the_version_skips_a_date_already_in_the_store(tmp_path):
+    from api.storage import LocalStore
+    now = datetime(2026, 12, 31, 3, tzinfo=timezone.utc)
+    store = LocalStore(tmp_path / "store")
+    store.write(f"models/2026-12-31/{rt.SERVER_FILE}", b"published elsewhere")
+    assert rt.new_version(tmp_path / "versions", now, store) == "2026-12-31-2"
+
+
+def test_a_run_does_not_overwrite_a_version_already_in_the_store(tmp_path, monkeypatch):
+    from api.storage import LocalStore
+    serving = stub_training(monkeypatch, tmp_path, server(0.81), server(0.80))
+    store = tmp_path / "store"
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    LocalStore(store).write(f"models/{today}/{rt.SERVER_FILE}", b"published elsewhere")
+    args = ["--serving-dir", str(serving), "--versions-dir", str(serving / "versions"),
+            "--work-dir", str(tmp_path / "retrain"), "--store", str(store)]
+    assert rt.main(args) == 0
+    assert (store / "models" / today / rt.SERVER_FILE).read_bytes() == b"published elsewhere"
+    assert (store / "models" / f"{today}-2" / rt.SERVER_FILE).exists()

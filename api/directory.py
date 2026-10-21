@@ -255,7 +255,7 @@ def parse_snapshot(data: bytes) -> dict:
                                                     for k, v in env.items()):
                 raise SnapshotError("a host record's environments are not name-to-count pairs")
     if not isinstance(snapshot.get("createdAt"), str) or _parse_time(snapshot["createdAt"]) is None:
-        raise SnapshotError("no createdAt time")
+        raise SnapshotError("no createdAt time with a timezone")
     return snapshot
 
 
@@ -349,10 +349,12 @@ class DirectoryState:
 
 
 def _parse_time(value: str | None) -> datetime | None:
+    """The time, or None when it does not parse or has no timezone (age_seconds() compares it with UTC)."""
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        when = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
+    return when if when.tzinfo is not None else None
 
 
 class DirectoryCache:

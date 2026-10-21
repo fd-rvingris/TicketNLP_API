@@ -36,6 +36,7 @@ from .paths import DATA_DIR, INSTANCES_PATH
 MODEL_PATH = DATA_DIR / "models" / "server_detector.joblib"
 DEFAULT_MAX_CHARS = 20_000  # description characters read per ticket
 DEFAULT_THRESHOLD = 0.5  # used only when no validation split is available
+KNOWLEDGE_CACHE_LIMIT = 100_000  # per-name feature results kept per directory; cleared when full
 TOP_PATTERNS = 60  # compressed patterns kept as one-hot features; the rest are "other"
 DEFAULT_INSTANCE = "mssqlserver"  # stored as a host-level record, as match_mention() assumes
 
@@ -573,10 +574,10 @@ class Knowledge:
     def near_known_host(self, client: str | None, name: str) -> str | None:
         """The client's known host this name is a typo or sibling of (see near_match), or None."""
         key = ("near", client, name)
-        if key not in self._cache:
-            relation, known = near_match(name, self.profile(client, "host").names)
-            self._cache[key] = known if relation in ("typo", "sibling") else None
-        return self._cache[key]
+        if key in self._cache:
+            return self._cache[key]
+        relation, known = near_match(name, self.profile(client, "host").names)
+        return self._remember(key, known if relation in ("typo", "sibling") else None)
 
     def dictionary(self, client: str | None) -> tuple[frozenset, frozenset, frozenset]:
         """(hosts, (host, instance) pairs, instance names) confirmed for the client; empty when unknown."""
@@ -608,8 +609,15 @@ class Knowledge:
                # adds nothing instead of looking like "unlike every known name".
                f"{p}_sim": 1.0 - min(dist / max(len(name), 1), 1.0) if others else 0.0,
                f"{p}_other_conv": float(bool(other) and not own_prefix and not own_pattern)}
-        self._cache[key] = out
-        return out
+        return self._remember(key, out)
+
+    def _remember(self, key, value):
+        """Cache a per-name result. The cache is cleared when full: the API keeps one Knowledge per
+        directory for days, and every new token in caller text would otherwise add an entry."""
+        if len(self._cache) >= KNOWLEDGE_CACHE_LIMIT:
+            self._cache.clear()
+        self._cache[key] = value
+        return value
 
 
 def build_stop_words(tickets: list[dict], directory: ServerDirectory, min_share: float = 0.005,
@@ -1076,9 +1084,11 @@ class ServerModel:
 
     def knowledge(self, directory: ServerDirectory) -> Knowledge:
         key = id(directory)
-        if key not in self._know or self._know[key].directory is not directory:
-            self._know[key] = Knowledge(directory, self.stop)
-        return self._know[key]
+        know = self._know.get(key)
+        if know is None or know.directory is not directory:
+            know = Knowledge(directory, self.stop)
+            self._know[key] = know
+        return know  # not self._know[key]: forget_knowledge() on the refresh thread may pop it meanwhile
 
     def forget_knowledge(self, keep=()) -> None:
         """Drop the cached Knowledge of every directory not in keep, so a service that swaps in new
