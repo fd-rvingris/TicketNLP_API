@@ -21,8 +21,8 @@ original taxonomy sample (later labels win).
 Everything written is masked with common.mask_secrets, as text sent to the model is. Imported
 labels go to data/labels/claude_spans.jsonl (not the DBA label file), in the server_labels row
 format, so `python -m tools.server_labels evaluate --labels data/labels/claude_spans.jsonl` scores the
-detector against them. The prompts are docs/claude-labeling-prompt.md and
-docs/claude-taxonomy-prompt.md. Prints counts only, never ticket text.
+detector against them. The prompts are prompts/claude-labeling-prompt.md and
+prompts/claude-taxonomy-prompt.md. Prints counts only, never ticket text.
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ def cmd_labels(args) -> None:
     print(f"{len(records):,} tickets ({kinds['human']:,} human, {kinds['alert']:,} alerts) in {len(groups)} "
           f"batches under {out_dir}")
     if not args.out_dir:
-        print("Upload one batch per message with docs/claude-labeling-prompt.md; save each reply as "
+        print("Upload one batch per message with prompts/claude-labeling-prompt.md; save each reply as "
               "data/claude_pack/returned/labels_NNN.jsonl (or run tools/claude_relabel.ps1)")
 
 
@@ -386,7 +386,7 @@ def cmd_taxonomy(args) -> None:
     print(f"{len(tickets):,} tickets ({len(human):,} human, {len(alerts):,} alerts) digested into {out_dir}:")
     for name, size in sizes.items():
         print(f"  {name:22} {size / 1e6:6.2f} MB")
-    print("Upload all of them with docs/claude-taxonomy-prompt.md")
+    print("Upload all of them with prompts/claude-taxonomy-prompt.md")
 
 
 # --- Import ------------------------------------------------------------------------

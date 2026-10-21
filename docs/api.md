@@ -227,7 +227,7 @@ the gitignored `.env`; it prints a generated key to add when there is none), `--
 `--no-reload`, `--host`, `--port`.
 
 **Swagger UI.** http://127.0.0.1:8000/docs lets you try every endpoint; each request has made-up
-examples to pick from, including the access request email from prompt 5.
+examples to pick from, including an access request email.
 
 **Example requests.** `docs/api-examples.http` (VS Code REST Client) and `docs/api-examples.ps1`
 (PowerShell `Invoke-RestMethod`) cover each endpoint, with and without subject and `zendeskOrgId`, an

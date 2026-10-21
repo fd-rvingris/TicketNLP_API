@@ -5,7 +5,7 @@ Relabels Claude's server-name label sets through the Claude Code CLI, one fresh 
 .DESCRIPTION
 For each label set, writes labeling batches for the same tickets
 (python -m tools.claude_pack labels --from-labels), sends each batch to `claude -p` with
-docs\claude-labeling-prompt.md as the system prompt, checks the reply against its batch
+prompts\claude-labeling-prompt.md as the system prompt, checks the reply against its batch
 (claude_pack check-reply), and retries a reply that is unusable. Every call is a new session with no
 tools, MCP servers, settings or saved history, so nothing carries over from one batch to the next.
 
@@ -52,7 +52,7 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path $PSScriptRoot -Parent
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
-$Prompt = Join-Path $Root "docs\claude-labeling-prompt.md"
+$Prompt = Join-Path $Root "prompts\claude-labeling-prompt.md"
 $Data = Join-Path $Root "data"
 # Relabel sets label the tickets of an existing label file again; rest sets label every other ticket of
 # a ticket file into a new label file. Only test-file sets are scored: the rest of the training file is

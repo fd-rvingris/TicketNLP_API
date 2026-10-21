@@ -14,9 +14,8 @@ Updated 2026-10-19.
 ## Medium
 
 - Retrain the server detector once the bulk labels are in. The 2026-10-19 retrain was held back by the gate: host F1 on the test set fell 2.5 points, though instance F1 rose on both sets. It is kept as `data/models/server_detector.retrained-2026-10-19.joblib`.
-- Update build prompts 1, 3 and 7 with the new scope and baseline figures, and retire prompt 2, which prompt 7 replaces.
 - Decide whether the alert `collector` field counts as a server.
-- After the bulk labels arrive: train on hand labels (prompt 7, step 1), add name-swap augmentation (prompt 1), then run the model comparison (prompt 3).
+- After the bulk labels arrive: train the server detector on hand labels, add name-swap augmentation, then compare the model kinds.
 - Grow the `ha_terms` rule into one subject keyword table per type, keeping only terms the bulk labels show are at least 90% precise.
 - Schedule the quarterly retrain (`python -m tools.retrain`, see the README) and build the DW2.0 export step it needs.
 - Deploy the API to Azure (`docs/azure-deploy.md`) when ready.
@@ -26,7 +25,7 @@ Updated 2026-10-19.
 - Add an availability group subtype under `replication_ha_dr`, or detect availability group and listener names.
 - Measure a `Host=` connection-string rule (217 tickets use that form).
 - Add the Keystone feedback endpoint for DBA type corrections.
-- Build the transformer and ensemble (the later steps of prompt 7), only if the comparison shows the simpler models have stopped improving.
+- Build a transformer tagger and ensemble, only if the comparison shows the simpler models have stopped improving.
 
 ## Done on 2026-10-19
 

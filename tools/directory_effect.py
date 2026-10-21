@@ -1,5 +1,5 @@
 """What serving the detector with a CMDB-hydrated directory snapshot changes, against the directory
-saved in the model file (docs/prompt-6-ticket-api.md, "Effect on accuracy").
+saved in the model file (docs/api.md, "Effect on accuracy").
 
     python -m tools.directory_effect [--instances data/instances.csv] [--snapshot FILE] [--without-dw]
 

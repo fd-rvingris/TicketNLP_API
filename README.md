@@ -3,7 +3,7 @@
 Classifies Fortified Data Zendesk tickets (type, intent) and finds the SQL
 Server hosts and instances they mention, matched against the known names of
 each client. It started as a proof of concept and is being developed into a
-ticket analysis API hosted in Azure (docs/prompt-6-ticket-api.md). Today it
+ticket analysis API hosted in Azure (docs/api.md). Today it
 runs locally: the server detector and the taxonomy classifier work without an
 LLM, and an LLM classifier path measures what a single Claude call can do.
 
@@ -14,8 +14,8 @@ LLM, and an LLM classifier path measures what a single Claude call can do.
 | ticket_analysis/ | What the API ships: alert parsing, secret masking, text cleaning, server detection, type classification and the taxonomy. It never imports from tools/, and requirements.txt is all it needs. |
 | api/ | The ticket analysis API (FastAPI and MCP) over the package: the service layer, auth, directory snapshots and the refresh job. It imports only ticket_analysis; its image installs only requirements-api.txt. See docs/api.md. |
 | tools/ | Data loading, the LLM run workflow, training, evaluation, labeling and the review pages. Run each as `python -m tools.<name>` from the repository root. |
-| prompts/ | LLM prompt versions. |
-| docs/ | Design notes, build prompts and export queries. |
+| prompts/ | LLM prompts: the classifier's versions and the Claude labeling and taxonomy prompts. |
+| docs/ | The API reference, deployment and design notes, and export queries. |
 | tests/ | pytest; no network access. |
 
 ## What it does
@@ -105,8 +105,8 @@ docs/api-examples.http and docs/api-examples.ps1.
     python -m tools.split_alerts data\train_tickets.csv  # writes train_tickets_alerts.csv and _human.csv
     python -m tools.server_detector evaluate             # non-LLM server and instance detector (see below)
     python -m tools.detector_ui --open                   # try the saved detector on pasted text or a Zendesk ticket
-    python -m tools.claude_pack labels                   # server-labeling batches for a Claude chat (docs/claude-labeling-prompt.md)
-    python -m tools.claude_pack taxonomy                 # digest of all tickets for a taxonomy chat (docs/claude-taxonomy-prompt.md)
+    python -m tools.claude_pack labels                   # server-labeling batches for a Claude chat (prompts/claude-labeling-prompt.md)
+    python -m tools.claude_pack taxonomy                 # digest of all tickets for a taxonomy chat (prompts/claude-taxonomy-prompt.md)
     python -m tools.claude_pack import-labels data\claude_pack\returned\labels_*.jsonl
     .\tools\claude_relabel.ps1                           # relabel Claude's server-name label sets with the Claude Code CLI
     python -m tools.retrain --dry-run                    # retrain both models and gate them (see Scheduled retraining)
@@ -549,7 +549,7 @@ claude_spans_holdout.jsonl on the training holdout) cover database servers of
 every engine: SQL Server, MySQL and MariaDB, PostgreSQL, Oracle, MongoDB and
 cloud databases, with the Windows or Linux servers they run on. Oracle SIDs and
 service names count as bare instances; MySQL, PostgreSQL and MongoDB have
-hosts only. The prompt is docs/claude-labeling-prompt.md. The first labels
+hosts only. The prompt is prompts/claude-labeling-prompt.md. The first labels
 covered SQL Server only; they are kept as `*_sqlserver_only.jsonl`.
 
 `tools/claude_relabel.ps1` labels the same tickets again without Claude
@@ -644,7 +644,7 @@ Quarterly, at 03:00 on the first day of January, April, July and October:
 
 - ticket_analysis/taxonomy.json: versioned type and intent lists. v1-draft (20 types, 7
   intents) was proposed by Claude from a digest of all 12,000 tickets
-  (docs/claude-taxonomy-prompt.md) and awaits team review; its notes, with
+  (prompts/claude-taxonomy-prompt.md) and awaits team review; its notes, with
   the Zendesk category and alert name mappings, are in
   data/claude_pack/returned/taxonomy_notes.md. taxonomy_v0.json keeps the
   earlier draft for comparison.
