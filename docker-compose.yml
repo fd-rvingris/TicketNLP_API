@@ -1,0 +1,25 @@
+# Run the Azure image on this machine before deploying: docker compose up --build
+# The models, the taxonomy notes and the directory snapshots are mounted read-only from data/ (never copied
+# into the image). Auth is api_key, as in Azure: API_KEYS comes from .env (gitignored), and only that variable
+# is passed to the container. Run python -m api --local once first, so data/directory holds a snapshot.
+services:
+  api:
+    build: .
+    image: ticket-analysis-api:local
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      AUTH_MODE: api_key
+      API_KEYS: ${API_KEYS:?Add API_KEYS=<key> to .env}
+      MODEL_DIR: /models
+      TAXONOMY_NOTES_FILE: /notes/taxonomy_notes.md
+      DIRECTORY_STORE: /directory
+      ENABLE_DOCS: "true"
+      LOG_FORMAT: json
+    volumes:
+      - ./data/models:/models:ro
+      - ./data/claude_pack/returned:/notes:ro
+      - ./data/directory:/directory:ro
+    read_only: true
+    tmpfs:
+      - /tmp

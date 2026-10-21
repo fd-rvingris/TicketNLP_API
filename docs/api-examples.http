@@ -1,0 +1,112 @@
+# Example requests for the Ticket Analysis API (VS Code REST Client extension: click "Send Request").
+# Start the API first: python -m api --local   (or --auth api_key for the key examples, or docker compose up)
+# Made-up text only. @apiKey is used only when the API runs with AUTH_MODE=api_key.
+
+@base = http://127.0.0.1:8000
+@apiKey = paste-the-API_KEYS-value-from-.env
+
+### Liveness and readiness (no auth)
+GET {{base}}/health
+
+###
+GET {{base}}/ready
+
+### Detect: subject and zendeskOrgId (integer)
+POST {{base}}/v1/detect
+Content-Type: application/json
+X-API-Key: {{apiKey}}
+X-Request-Id: example-detect-1
+
+{
+  "text": "The REPORTS instance on FAKESQL01 is slow since this morning. FAKESQL02\\FINANCE is fine.",
+  "subject": "Slow reports",
+  "zendeskOrgId": 999001,
+  "ticketId": "12345"
+}
+
+### Detect: text only, no subject and no client (no client's known names apply)
+POST {{base}}/v1/detect
+Content-Type: application/json
+X-API-Key: {{apiKey}}
+
+{
+  "text": "Please check FAKESQL01 and FAKESQL01\\REPORTS today."
+}
+
+### Detect: zendeskOrgId as a string
+POST {{base}}/v1/detect
+Content-Type: application/json
+X-API-Key: {{apiKey}}
+
+{
+  "text": "Server=FAKESQL03,1433;Database=FAKE_DB is refusing connections.",
+  "zendeskOrgId": "999001"
+}
+
+### Classify: the access request email (rule:access_request)
+POST {{base}}/v1/classify
+Content-Type: application/json
+X-API-Key: {{apiKey}}
+
+{
+  "text": "Hi Fortified Data Support,\r\n\r\nCould you please help me get READ access for the schema below, Server=FAKESQL01, Database=FAKE_DB, for the execution user CORP\\svc-fake-batch. Please approve.\r\n\r\nThanks,\r\nJane Doe\r\nData Engineer | Fake Co",
+  "subject": "READ access request"
+}
+
+### Classify: without a subject
+POST {{base}}/v1/classify
+Content-Type: application/json
+X-API-Key: {{apiKey}}
+
+{
+  "text": "Disk space is low on the data drive of FAKESQL01, the volume is nearly full."
+}
+
+### Analyze: a collector alert (alert-name table, alert intent rule)
+POST {{base}}/v1/analyze
+Content-Type: application/json
+X-API-Key: {{apiKey}}
+
+{
+  "text": "AlertId 123456\nAlert FD - SQL Agent Job Failure\nClient Name Fake Co\nServer FAKESQL01\nPlatform Microsoft SQL Server\nInstance Job: Nightly Load, Category: Data\nMessage Error: The job failed.\nSeverity Warning\nLevel Failure\nPreviousLevel OK\nOpen Date 07/21/2026 17:00:00 UTC\n",
+  "subject": "Fake Co - Alert #42 - FD - SQL Agent Job Failure",
+  "zendeskOrgId": 999001
+}
+
+### Catalog: every key and value the responses can contain
+GET {{base}}/v1/catalog
+X-API-Key: {{apiKey}}
+
+### Auth failure: a wrong key (401 when the API runs with --auth api_key)
+POST {{base}}/v1/detect
+Content-Type: application/json
+X-API-Key: fake-wrong-key-0000000000
+
+{
+  "text": "FAKESQL01 is down."
+}
+
+### Validation failure: no text (422)
+POST {{base}}/v1/detect
+Content-Type: application/json
+X-API-Key: {{apiKey}}
+
+{
+  "subject": "No text"
+}
+
+### Oversized body (413): the REST Client cannot generate 1 MB, so use docs/api-examples.ps1 for this case.
+# A body that is not JSON gives 415:
+POST {{base}}/v1/detect
+Content-Type: text/plain
+X-API-Key: {{apiKey}}
+
+FAKESQL01 is down.
+
+### MCP over HTTP: list the tools (stateless JSON-RPC)
+POST {{base}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}

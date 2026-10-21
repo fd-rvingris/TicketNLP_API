@@ -62,6 +62,7 @@ FIRING_LABELS = {
 # Fields that name the alert's own servers, the one list the server detector reads. True: the value
 # is a list (comma or space separated); False: one name.
 SERVER_FIELDS = {"server": False, "instance": False, "db_instance": False, "target": False,
+                 "master_host": False,  # Grafana replication alerts: the replica's primary
                  "hosts": True, "backup_servers": True, "instancenames": True, "instances": True, "targets": True}
 # Field names derived from labels ("Host(s):" gives host_s) that are renamed
 FIELD_KEYS = {"host_s": "hosts", "servername": "server_name", "databasename": "database"}

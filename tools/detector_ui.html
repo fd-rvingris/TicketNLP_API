@@ -37,11 +37,11 @@
            background: var(--panel); border-bottom: 1px solid var(--line); }
   header h1 { margin: 0; font-size: 16px; font-weight: 600; }
   .meta, .stats { color: var(--muted); font-size: 12px; }
-  main { max-width: 1200px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+  main { max-width: 1440px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 10px; min-width: 0; }
   .card h2 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
-  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
-  .tabs button { border: 0; background: none; padding: 6px 12px; border-bottom: 2px solid transparent; cursor: pointer; color: var(--muted); }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }  /* scrolls rather than wraps when narrow */
+  .tabs button { border: 0; background: none; padding: 6px 12px; border-bottom: 2px solid transparent; cursor: pointer; color: var(--muted); white-space: nowrap; flex: none; }
   .tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .row > label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
@@ -174,6 +174,7 @@
       <button type="button" role="tab" id="tab-zendesk" aria-selected="false" aria-controls="panel-zendesk">Zendesk ticket</button>
       <button type="button" role="tab" id="tab-label" aria-selected="false" aria-controls="panel-label" hidden>Label tickets</button>
       <button type="button" role="tab" id="tab-types" aria-selected="false" aria-controls="panel-types" hidden>Alert types</button>
+      <button type="button" role="tab" id="tab-alabels" aria-selected="false" aria-controls="panel-alabels" hidden>Alert labels</button>
       <button type="button" role="tab" id="tab-how" aria-selected="false" aria-controls="panel-how">How it works</button>
       <button type="button" role="tab" id="tab-tax" aria-selected="false" aria-controls="panel-tax">Taxonomy</button>
       <button type="button" role="tab" id="tab-cls" aria-selected="false" aria-controls="panel-cls">Classify ticket</button>
@@ -226,8 +227,9 @@
                 <tr><td><code>staff_logon</code></td><td>A <code>[Log on to ...]</code> or <code>[Change Password for ...]</code> subject</td><td>staff_access</td><td class="num">39</td><td class="num">100%</td></tr>
                 <tr><td><code>validation_results</code></td><td>A Validation Results report subject</td><td>outage_availability</td><td class="num">16</td><td class="num">100%</td></tr>
                 <tr><td><code>sip_review</code></td><td>A SIP review subject naming one area (Security Audit, Index and Performance, Capacity, DR/HA, Database Maintenance, patching)</td><td>that area's type</td><td class="num">21</td><td class="num">100%</td></tr>
-                <tr><td><code>database_refresh</code></td><td>A Database refresh or DB refresh subject, or one that refreshes a named database or refreshes from or to an environment (not statistics, reports, caches, cubes or tokens)</td><td>database_refresh</td><td class="num">n/a</td><td class="num">not measured</td></tr>
+                <tr><td><code>database_refresh</code></td><td>A Database refresh or DB refresh subject, or one that refreshes a named database or refreshes from or to an environment (not statistics, reports, caches, cubes or tokens)</td><td>database_refresh</td><td class="num">5</td><td class="num">100%</td></tr>
                 <tr><td><code>access_request</code></td><td>Grant, read, write or access wording (READ access, grant, db_datareader, add the login, permission to) plus a login, user, role, schema or service account; not for our own accounts, our collector, change tickets, releases, supplied scripts, or a refresh or restore into another environment</td><td>access_security</td><td class="num">11</td><td class="num">91%</td></tr>
+                <tr><td><code>ha_terms</code></td><td>A subject naming AG or AGs (upper case), an availability group, Always On, replication, log shipping, mirroring, Data Guard, Dbvisit or a failover; not when it is about patching or upgrading</td><td>replication_ha_dr</td><td class="num">30</td><td class="num">97%</td></tr>
               </tbody>
             </table></div>
           </div></li>
@@ -423,6 +425,10 @@
       <div class="meta" id="types-note"></div>
       <div class="types-wrap" id="types-list"></div>
     </div>
+    <div id="panel-alabels" role="tabpanel" aria-labelledby="tab-alabels" hidden style="display:none; gap:8px">
+      <p class="meta" id="alabels-note"></p>
+      <div class="types-wrap" id="alabels-list"></div>
+    </div>
     <div id="panel-how" role="tabpanel" aria-labelledby="tab-how" hidden style="display:none; gap:8px">
       <div class="how">
         <p>Each ticket passes through six layers. Known names are matched first, unambiguous wording second, and the model decides everything that is left. Click a highlighted name in the example to follow it through the layers.</p>
@@ -468,12 +474,13 @@
             <div class="layer-head"><h3>Rules</h3><span class="chip">score at least 0.95</span></div>
             <div class="rule-grid">
               <div><code>instance:service_suffix</code> MSSQL$NAME, SQLAgent$NAME</div>
+              <div><code>instance:oracle</code> SID=, SERVICE_NAME=, host:1521/NAME, @host:1521:NAME; SID or PDB NAME when Oracle is mentioned</div>
               <div><code>instance:name_before_instance</code> NAME instance</div>
               <div><code>instance:name_after_instance</code> instance (named) NAME</div>
               <div><code>host:host_instance</code> HOST\INSTANCE, host has a digit or is known</div>
               <div><code>host:connection_string</code> Server=, Data Source=</div>
               <div><code>host:unc_path</code> \\host\share</div>
-              <div><code>host:port</code> host,1433, tcp:host, host:1433</div>
+              <div><code>host:port</code> host,1433, tcp:host, or a database port: host:1433, :3306, :5432, :1521, :27017, exporter :9104</div>
               <div><code>host:after_server_word</code> server sql01, instance on sql01</div>
               <div><code>host:known_name</code> client's known host with a digit</div>
               <div><code>host:near_known_name</code> one typo, or trailing digits differ</div>
@@ -577,7 +584,7 @@
 
   // Rule names from server_detector._rule, in words. A rule match scores at least 0.95.
   const RULE_TEXT = {
-    "instance:service_suffix": "rule: MSSQL$/SQLAgent$ service name", "instance:name_before_instance": "rule: <name> instance",
+    "instance:service_suffix": "rule: MSSQL$/SQLAgent$ service name", "instance:oracle": "rule: Oracle SID or service name","instance:name_before_instance": "rule: <name> instance",
     "instance:name_after_instance": "rule: instance <name>", "instance:known_name": "rule: client's known instance",
     "host:dictionary": "dictionary: client's confirmed host", "instance:dictionary": "dictionary: client's confirmed instance",
     "host:known_name": "rule: client's known host", "host:near_known_name": "rule: close to a known host",
@@ -618,7 +625,12 @@
     run("/api/analyze", { subject: $("subject").value, text: $("text").value, client: $("client").value }, $("analyze"));
   }
   function fetchZendesk() { run("/api/zendesk", { url: $("zd-url").value }, $("fetch")); }
-  function rescore() { if (LAST && !busy) run("/api/analyze", LAST, $("analyze")); }
+  function rescore() {
+    if (busy) return;
+    // A labeled alert ticket is opened again, so its label stays on the page
+    if ($("tab-alabels").getAttribute("aria-selected") === "true" && ALABEL_SEL) { loadAlertLabels(); openAlertLabel(ALABEL_SEL); }
+    else if (LAST) run("/api/analyze", LAST, $("analyze"));
+  }
 
   // --- Rendering -------------------------------------------------------------
 
@@ -719,14 +731,29 @@
       el("h2", {}, `Alert fields (${af.family || "alert"}${af.layout ? `, ${human(af.layout)} layout` : ""})`),
       el("dl", { class: "fields" }, afKeys.flatMap(k => [el("dt", {}, afName(k)), el("dd", { class: "mono" }, af[k])]))) : null;
 
+    const lab = r.labels;  // only on the Alert labels tab
     const detRows = dets.map((d, i) => el("tr", { class: "clickable", onclick: () => jumpTo(i), title: "Show in the text" },
       el("td", { class: "mono" }, d.text), el("td", {}, human(d.kind)), el("td", { class: "mono" }, d.host || ""),
       el("td", { class: "mono" }, d.instance || ""), statusCell(d), el("td", { class: "num" }, d.score.toFixed(2)),
       el("td", {}, d.rule ? chip(ruleLabel(d.rule), "info") : chip("model")),
+      lab ? el("td", {}, d.labeled ? chip("marked", "good") : chip("not marked", "bad")) : null,
       el("td", { class: "stats" }, d.evidence)));
+    const labCard = lab ? el("section", { class: "card" }, el("h2", {}, "Claude's label"),
+      el("dl", { class: "fields" },
+        el("dt", {}, "Status"), el("dd", {}, `${lab.status}` + (lab.labeler ? ` · ${lab.labeler}` : "") + (lab.labeled_at ? ` · ${lab.labeled_at}` : "")),
+        el("dt", {}, "Notes"), el("dd", {}, lab.notes || el("span", { class: "stats" }, "none")),
+        el("dt", {}, "Agreement"), el("dd", {}, `${dets.filter(d => d.labeled).length} of ${dets.length} detections overlap a labeled span; ` +
+          `${lab.spans.filter(s => s.found).length} of ${lab.spans.length} labeled spans detected`)),
+      lab.spans.length ? el("div", { class: "table-wrap" }, el("table", {},
+        el("thead", {}, el("tr", {}, ["Labeled span", "Field", "Kind", "Host", "Instance", "Detected"].map(h => el("th", {}, h)))),
+        el("tbody", {}, lab.spans.map(s => el("tr", {}, el("td", { class: "mono" }, s.text), el("td", {}, s.field),
+          el("td", {}, human(s.kind)), el("td", { class: "mono" }, s.host || ""), el("td", { class: "mono" }, s.instance || ""),
+          el("td", {}, s.found ? chip("yes", "good") : chip("no", "bad")))))))
+        : el("div", { class: "stats" }, "No labeled spans: the label says this ticket names no server.")) : null;
     const detCard = el("section", { class: "card" }, el("h2", {}, `Detections (${dets.length})`),
       dets.length ? el("div", { class: "table-wrap" }, el("table", {},
-        el("thead", {}, el("tr", {}, ["Mention", "Kind", "Host", "Instance", "Status", "Score", "Why", "Evidence"].map(h => el("th", {}, h)))),
+        el("thead", {}, el("tr", {}, ["Mention", "Kind", "Host", "Instance", "Status", "Score", "Why", lab ? "Claude" : null, "Evidence"]
+          .filter(Boolean).map(h => el("th", {}, h)))),
         el("tbody", {}, detRows)))
       : el("div", { class: "stats" }, "Nothing scored above the thresholds. The candidate table below shows every score."));
 
@@ -747,7 +774,7 @@
         el("thead", {}, el("tr", {}, ["Token", "Field", "Form", "Eligible as", "P(host)", "P(instance)", "Rule"].map(h => el("th", {}, h)))),
         el("tbody", {}, candRows)))));
 
-    $("results").replaceChildren(...[summary, fieldsCard, textCard, detCard, candCard].filter(Boolean));
+    $("results").replaceChildren(...[summary, labCard, fieldsCard, textCard, detCard, candCard].filter(Boolean));
   }
 
   // --- Labeling ----------------------------------------------------------------
@@ -1040,6 +1067,41 @@
     run("/api/alert-types/example", { key }, null);
   }
 
+  // --- Alert labels --------------------------------------------------------------
+  // The labeled alert tickets, to check whether the detections the labels do not cover are wrong or
+  // the labels missed the servers.
+
+  let ALABELS = null, ALABEL_SEL = "";
+
+  async function loadAlertLabels() {
+    try {
+      ALABELS = await post("/api/alert-labels", thresholds());
+    } catch (e) { setError(e.message); return; }
+    renderAlertLabels();
+  }
+
+  function renderAlertLabels() {
+    const rows = ALABELS.tickets;
+    const dets = rows.reduce((n, x) => n + x.detections, 0), covered = rows.reduce((n, x) => n + x.labeled, 0);
+    $("alabels-note").textContent = `${rows.length} labeled alert tickets in ${ALABELS.source}: ${dets} detections, ` +
+      `${covered} of them on a labeled span. Open a ticket to see whether the detections the label does not cover are real servers. ` +
+      "Secrets are masked; the alert fields are the stored ones, so the detections match the label evaluation.";
+    const tr = x => el("tr", { class: "clickable" + (x.ticket_id === ALABEL_SEL ? " sel" : ""), title: "Open the ticket",
+        onclick: () => openAlertLabel(x.ticket_id) },
+      el("td", { class: "mono" }, `#${x.ticket_id}`), el("td", {}, x.client || ""), el("td", {}, x.alert_type || human(x.layout || "")),
+      el("td", {}, x.status), el("td", { class: "num" }, x.spans), el("td", { class: "num" }, x.detections),
+      el("td", { class: "num" }, x.alert_field), el("td", { class: "num" }, x.labeled), el("td", { class: "stats" }, x.notes));
+    $("alabels-list").replaceChildren(el("table", {},
+      el("thead", {}, el("tr", {}, ["Ticket", "Client", "Alert type", "Label", "Labeled spans", "Detections", "From alert fields",
+        "On a labeled span", "Notes"].map(h => el("th", {}, h)))),
+      el("tbody", {}, rows.map(tr))));
+  }
+
+  function openAlertLabel(id) {
+    ALABEL_SEL = id; renderAlertLabels();
+    run("/api/alert-labels/open", { ticket_id: id }, null);
+  }
+
   // --- How it works ----------------------------------------------------------------
   // A fixed, made-up example. Each name's path through the layers: [state, note] per layer, where state is
   // "hit" (decided here), "stop" (dropped here), "pass" or "skip" (not reached or not needed).
@@ -1155,6 +1217,7 @@
     "rule:validation_results": "keyword rule: Validation Results reports are always outage_availability",
     "rule:sip_review": "keyword rule: a SIP review of one area takes that area's type",
     "rule:database_refresh": "keyword rule: a subject that names a database refresh",
+    "rule:ha_terms": "keyword rule: a subject that names an availability group, replication or failover",
     "rule:access_request": "keyword rule: an access or grant request for a client login, user, role or schema",
   };
   const sourceText = s => SOURCE_TEXT[s] || (s.startsWith("rule:") ? `keyword rule ${s.slice(5)}` : s);
@@ -1277,7 +1340,7 @@
   // --- Setup ---------------------------------------------------------------------
 
   function selectTab(which) {
-    for (const name of ["text", "zendesk", "label", "types", "how", "tax", "cls", "flow", "lflow"]) {
+    for (const name of ["text", "zendesk", "label", "types", "alabels", "how", "tax", "cls", "flow", "lflow"]) {
       const on = name === which;
       $(`tab-${name}`).setAttribute("aria-selected", String(on));
       $(`panel-${name}`).hidden = !on;
@@ -1301,6 +1364,7 @@
     $("tab-zendesk").addEventListener("click", () => selectTab("zendesk"));
     $("tab-label").addEventListener("click", () => selectTab("label"));
     $("tab-types").addEventListener("click", () => { selectTab("types"); if (!TYPES.length) loadTypes(); });
+    $("tab-alabels").addEventListener("click", () => { selectTab("alabels"); if (!ALABELS) loadAlertLabels(); });
     $("tab-how").addEventListener("click", () => { selectTab("how"); renderHow(); });
     $("tab-tax").addEventListener("click", () => { selectTab("tax"); loadTaxonomy(); });
     $("tab-cls").addEventListener("click", () => { selectTab("cls"); loadTaxonomy(); });
@@ -1347,6 +1411,11 @@
       $("tab-types").hidden = false;
       $("tab-types").textContent = `Alert types (${INFO.alert_types})`;
       if (location.hash === "#alert-types") { selectTab("types"); loadTypes(); }
+    }
+    if (INFO.alert_labels) {
+      $("tab-alabels").hidden = false;
+      $("tab-alabels").textContent = `Alert labels (${INFO.alert_labels})`;
+      if (location.hash === "#alert-labels") { selectTab("alabels"); loadAlertLabels(); }
     }
   }
   init();

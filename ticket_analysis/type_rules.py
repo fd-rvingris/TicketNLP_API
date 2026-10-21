@@ -122,8 +122,27 @@ def access_request(subject: str, text: str) -> str | None:
     return "access_security"
 
 
+# --- ha_terms: a subject that names availability groups, replication or failover --------------
+
+# AG and AGs only in upper case, so "ag" inside other words or lower-case text does not count
+_HA = re.compile(r"\bAGs?\b|(?i:\bavailability" + _H + r"+groups?\b|\balways" + _H + r"*on\b|\breplicat\w*"
+                 r"|\blog" + _H + r"*shipping\b|\bmirroring\b|\bdata" + _H + r"*guard\b|\bdbvisit\b"
+                 r"|\bfail(?:ed)?" + _H + r"*-?" + _H + r"*overs?\b)")
+# Patching or upgrading AG nodes, often with a failover, is maintenance_patching or an upgrade
+_PATCHING = re.compile(r"(?i)\bpatch\w*|\bcumulative" + _H + r"+updates?\b|\bCU\d+\b|\bwindows" + _H
+                       + r"+updates?\b|\bupgrad\w*")
+
+
+def ha_terms(subject: str, text: str) -> str | None:
+    """An availability group (AG, AGs, availability group, Always On), replication, log shipping,
+    mirroring, Data Guard, Dbvisit or failover subject, unless it is about patching or upgrading. In
+    Claude's sample labels these subjects were replication_ha_dr 27 times out of 28; 'replica' (14 of
+    23) and 'production' (4 of 37) are left to the model."""
+    return "replication_ha_dr" if _HA.search(subject) and not _PATCHING.search(subject) else None
+
+
 RULES = [("staff_logon", staff_logon), ("validation_results", validation_results), ("sip_review", sip_review),
-         ("database_refresh", database_refresh), ("access_request", access_request)]
+         ("database_refresh", database_refresh), ("access_request", access_request), ("ha_terms", ha_terms)]
 
 
 def apply_rules(subject: str, text: str, rules=RULES) -> tuple[str, str] | None:

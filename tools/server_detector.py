@@ -23,11 +23,12 @@ from sklearn.metrics import average_precision_score, precision_recall_curve
 from ticket_analysis.jsonl import now_iso, read_jsonl, write_jsonl
 from ticket_analysis.paths import DATA_DIR, INSTANCES_PATH
 from ticket_analysis.server_detector import (BUILTIN_STOP, DEFAULT_INSTANCE, DEFAULT_MAX_CHARS, DEFAULT_THRESHOLD,
-                                             MODEL_PATH, RULE_SCORE, Knowledge, LocalServerDirectory, ServerDirectory,
+                                             MODEL_PATH, RULE_SCORE, Knowledge, ServerDirectory,
                                              ServerModel, add_features, build_stop_words, compress, detect_servers,
                                              is_alert_ticket, load_model, normalize_reference, ticket_candidates,
                                              ticket_names, ticket_text)
 from tools.common import REPORTS_DIR, fmt_pct, md_table
+from tools.directory_build import build_directory, without_names
 
 # Claude-labeled training tickets kept out of training and never tuned on: the unseen-name test set.
 HOLDOUT_LABELS_PATH = DATA_DIR / "labels" / "claude_spans_holdout.jsonl"
@@ -228,8 +229,8 @@ def select_config(train: list[dict], *, seed: int, max_chars: int, neg_ratio: fl
     and keep the best macro average precision over host and instance. Then try a separate binary
     instance model, and pick thresholds by best F1 on the validation split."""
     fit_t, val_t = split_validation(train, val_share, seed)
-    fit_dir = LocalServerDirectory.from_sources(fit_t, instances_path)
-    oracle = LocalServerDirectory.from_sources(train, instances_path)
+    fit_dir = build_directory(fit_t, instances_path)
+    oracle = build_directory(train, instances_path)
     trials = []
     for mode in modes:
         for kind in kinds:
@@ -370,8 +371,8 @@ def evaluate(train: list[dict], test: list[dict], *, seed: int, holdout_share: f
         raise SystemExit(f"{len(overlap)} tickets are in both the training and the test file")
     result = {"train_tickets": len(train), "test_tickets": len(test), "seed": seed, "holdout_share": holdout_share,
               "max_chars": max_chars, "neg_ratio": neg_ratio}
-    train_dir = LocalServerDirectory.from_sources(train, instances_path)
-    oracle = LocalServerDirectory.from_sources(train + test, instances_path)
+    train_dir = build_directory(train, instances_path)
+    oracle = build_directory(train + test, instances_path)
     result["directory"] = train_dir.stats()
     result["oracle_directory"] = oracle.stats()
     log("Directory (training): " + ", ".join(f"{k} {v:,}" for k, v in result["directory"].items()))
@@ -407,7 +408,7 @@ def evaluate(train: list[dict], test: list[dict], *, seed: int, holdout_share: f
 
     log("Unseen-host test ...")
     held_hosts = holdout_names(oracle.hosts(), holdout_share, seed)
-    dir_h = train_dir.without(hosts=held_hosts)
+    dir_h = without_names(train_dir, hosts=held_hosts)
     model_h, _ = fit_config(train, dir_h, exclude_hosts=held_hosts, **common)
     finish(model_h)
     recs_h, occ_h = score_tickets(model_h, test, dir_h, oracle)
@@ -418,7 +419,7 @@ def evaluate(train: list[dict], test: list[dict], *, seed: int, holdout_share: f
     held_inst = holdout_names(oracle.instance_names(), holdout_share, seed)
     shared = frozenset(n for n, k in oracle.instance_clients().items() if k > 1)
     unique = frozenset(oracle.instance_names()) - shared
-    dir_i = train_dir.without(instances=held_inst)
+    dir_i = without_names(train_dir, instances=held_inst)
     model_i, _ = fit_config(train, dir_i, exclude_instances=held_inst, **common)
     finish(model_i)
     recs_i, occ_i = score_tickets(model_i, test, dir_i, oracle)
@@ -653,7 +654,7 @@ def cmd_train(args) -> None:
     print("Selecting the model on a validation split ...")
     cfg = select_config(train, seed=args.seed, max_chars=args.max_chars, neg_ratio=args.neg_ratio,
                         kinds=args.kind or MODEL_KINDS, modes=args.alert_context or ALERT_CONTEXT_MODES)
-    directory = LocalServerDirectory.from_sources(train)
+    directory = build_directory(train)
     model, counts = fit_config(train, directory, kind=cfg["kind"], alert_context=cfg["alert_context"],
                                instance_model=cfg["instance_model"], seed=args.seed, max_chars=args.max_chars,
                                neg_ratio=args.neg_ratio)

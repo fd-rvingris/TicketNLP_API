@@ -29,15 +29,16 @@ import ticket_analysis.server_detector as sd
 import ticket_analysis.ticket_types as tt
 import tools.server_labels as sl
 import tools.ticket_types as ttt
-from ticket_analysis.alert_parser import alert_spans, parse_alert
-from ticket_analysis.jsonl import now_iso, read_jsonl
+from ticket_analysis.alert_parser import parse_alert
+# The analysis is shared with the API, so the page and the API show the same detections
+from ticket_analysis.analysis import MAX_TEXT, analyze, detect, scored_candidates, ticket_for_text  # noqa: F401
+from ticket_analysis.jsonl import read_jsonl
 from ticket_analysis.paths import DATA_DIR
 from ticket_analysis.tickets import make_ticket
 from tools.common import ZendeskClient, load_env
 
 PAGE_PATH = Path(__file__).parent / "detector_ui.html"
 DEFAULT_PORT = 8765
-MAX_TEXT = 200_000  # characters accepted from the page
 
 
 def parse_args():
@@ -64,6 +65,10 @@ def parse_args():
     p.add_argument("--alert-tickets", type=Path, nargs="*",
                    default=[DATA_DIR / "train_tickets.jsonl", DATA_DIR / "test_tickets.jsonl"],
                    help="ticket files the Alert types tab takes one example of each alert type from")
+    p.add_argument("--check-labels", type=Path, default=DATA_DIR / "labels" / "claude_spans.jsonl",
+                   help="span labels whose alert tickets the Alert labels tab shows")
+    p.add_argument("--check-tickets", type=Path, default=DATA_DIR / "test_tickets.jsonl",
+                   help="ticket file the --check-labels tickets come from")
     p.add_argument("--open", action="store_true", help="open the page in the default browser")
     return p.parse_args()
 
@@ -80,70 +85,6 @@ def client_names(tickets: list[dict]) -> dict[str, str]:
         if name and (org or name_key):
             names.setdefault(org or name_key, name)
     return names
-
-
-def ticket_for_text(subject: str, text: str, client: str | None, names: dict[str, str]) -> dict:
-    """A ticket for pasted text. The client key (a Zendesk organization id or 'name:<name>') decides
-    which client's known names are used; none means no client."""
-    org = client if client and not client.startswith("name:") else None
-    name = names.get(client) if client else None
-    if client and client.startswith("name:") and not name:
-        name = client[5:]
-    return make_ticket("pasted", subject, text, organization_id=org, organization_name=name, source="pasted")
-
-
-def scored_candidates(ticket: dict, directory, model: sd.ServerModel) -> list[dict]:
-    """Every candidate with its host and instance probabilities, highest first, for the page."""
-    know = model.knowledge(directory)
-    cands = sd.ticket_candidates(ticket, know, alert_context=model.alert_context, max_chars=model.max_chars)
-    if not cands:
-        return []
-    sd.add_features(cands, know, ticket)
-    subject_len = len(ticket.get("subject") or "")
-    out = []
-    for c, (ph, pi) in zip(cands, model.scores(cands)):
-        in_subject = c["start"] < subject_len
-        offset = 0 if in_subject else subject_len + 1
-        out.append({"text": c["text"], "field": "subject" if in_subject else "description",
-                    "start": c["start"] - offset, "end": c["end"] - offset, "kind": c["kind"],
-                    "host_candidate": c["host_ok"], "instance_candidate": c["inst_ok"],
-                    "p_host": round(float(ph), 4), "p_instance": round(float(pi), 4), "rule": c.get("rule")})
-    return sorted(out, key=lambda c: -max(c["p_host"], c["p_instance"]))
-
-
-def _threshold(value, default: float) -> float:
-    try:
-        x = float(value)
-    except (TypeError, ValueError):
-        return default
-    return min(max(x, 0.0), 1.0)
-
-
-def analyze(ticket: dict, bundle: dict, names: dict[str, str], *, host_threshold=None,
-            instance_threshold=None) -> dict:
-    model, directory = bundle["model"], bundle["directory"]
-    th_h = _threshold(host_threshold, model.host_threshold)
-    th_i = _threshold(instance_threshold, model.instance_threshold)
-    client = directory.client_for(ticket)
-    known = client in set(directory.clients())
-    found = sd.detect_servers(ticket, directory, model, host_threshold=th_h, instance_threshold=th_i)
-    return {
-        "ticket": {k: ticket.get(k) for k in ("ticket_id", "subject", "description", "organization_id",
-                                              "organization_name", "created_at", "source")},
-        "is_alert": sd.is_alert_ticket(ticket),
-        "client": {"key": client, "name": names.get(client) or ticket.get("organization_name"),
-                   "in_directory": known,
-                   "hosts": len(directory.hosts(client)) if known else 0,
-                   "instances": len(directory.instances(client)) if known else 0},
-        "thresholds": {"host": th_h, "instance": th_i},
-        "detections": found,
-        "alert_fields": ticket.get("alert_fields"),
-        # Where each alert value sits in the subject or description, for highlighting (every layout)
-        "alert_spans": alert_spans(ticket.get("subject") or "", ticket.get("description") or ""),
-        "candidates": scored_candidates(ticket, directory, model),
-        "max_chars": model.max_chars,
-        "analyzed_at": now_iso(),
-    }
 
 
 # --- Alert types -------------------------------------------------------------------
@@ -175,6 +116,38 @@ def alert_catalog(tickets: list[dict]) -> list[dict]:
                                          / len(members), 3),
                     "example_fields": len(set(fields or {}) - {"family", "layout"}), "example": example})
     return sorted(out, key=lambda r: (r["layout"], -r["alerts"], r["alert_type"].lower()))
+
+
+# --- Alert labels ------------------------------------------------------------------
+
+
+def labeled_alerts(labels: dict[tuple[str, str], dict], tickets: list[dict]) -> dict[str, tuple[dict, dict]]:
+    """Ticket id -> (ticket, label row) for the labeled tickets that are alerts, as the label evaluation
+    splits them (sd.is_alert_ticket), one row per ticket (sl.primary_labels), in ticket id order."""
+    by_id = {str(t.get("ticket_id")): t for t in tickets}
+    found = {tid: (by_id[tid], row) for tid, row in sl.primary_labels(labels).items()
+             if tid in by_id and sd.is_alert_ticket(by_id[tid])}
+    return dict(sorted(found.items(), key=lambda kv: (len(kv[0]), kv[0])))
+
+
+def masked_ticket(t: dict) -> dict:
+    """The ticket with secrets in its text and its stored alert fields masked character for character.
+    The stored fields are kept rather than parsed again, so the detections match the label evaluation."""
+    m = dict(t)
+    m["subject"] = sl.mask_same_length(t.get("subject") or "")[0]
+    m["description"] = sl.mask_same_length(t.get("description") or "")[0]
+    fields = t.get("alert_fields")
+    if isinstance(fields, dict):
+        m["alert_fields"] = {k: sl.mask_same_length(v)[0] if isinstance(v, str)
+                             else [sl.mask_same_length(x)[0] if isinstance(x, str) else x for x in v]
+                             if isinstance(v, list) else v for k, v in fields.items()}
+    return m
+
+
+def same_class_overlap(span: dict, others: list[dict]) -> bool:
+    """Whether a detection overlaps a labeled span of its class (or a span a detection of its class), the
+    match sl.evaluate_labels counts."""
+    return any(sl._overlaps(span, o) and sl._class(span["kind"]) == sl._class(o["kind"]) for o in others)
 
 
 # --- Zendesk -----------------------------------------------------------------------
@@ -219,11 +192,13 @@ def fetch_ticket(zd: ZendeskClient, ticket_id: str) -> dict:
 class App:
     def __init__(self, bundle: dict, names: dict[str, str], zendesk: ZendeskClient | None, subdomain: str | None,
                  port: int, queue: sl.LabelQueue | None = None, allowed_hosts: set[str] | None = None,
-                 catalog: list[dict] | None = None, types: dict | None = None, alert_map: dict | None = None):
+                 catalog: list[dict] | None = None, types: dict | None = None, alert_map: dict | None = None,
+                 label_check: dict[str, tuple[dict, dict]] | None = None, label_check_source: str = ""):
         self.bundle, self.names, self.zendesk, self.subdomain, self.port = bundle, names, zendesk, subdomain, port
         self.queue = queue
         self.types, self.alert_map = types, alert_map or {}
         self.catalog = {c["key"]: c for c in catalog or []}
+        self.label_check, self.label_check_source = label_check or {}, label_check_source
         self.allowed_hosts = allowed_hosts or {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     # --- Labeling ----------------------------------------------------------------
@@ -316,6 +291,43 @@ class App:
         result["alert_type"] = {k: v for k, v in entry.items() if k != "example"}
         return result
 
+    # --- Alert labels ------------------------------------------------------------
+
+    def alert_labels(self, body: dict) -> dict:
+        """One row per labeled alert ticket: the label's status, notes and span count against what the
+        saved model detects, and how many detections the labels cover."""
+        model, directory = self.bundle["model"], self.bundle["directory"]
+        rows = []
+        for tid, (t, row) in self.label_check.items():
+            m = masked_ticket(t)
+            dets = detect(m, model, directory, host_threshold=body.get("host_threshold"),
+                          instance_threshold=body.get("instance_threshold"))["detections"]
+            fields = t.get("alert_fields") or {}
+            rows.append({"ticket_id": tid, "client": t.get("organization_name"), "layout": fields.get("layout"),
+                         "alert_type": fields.get("alert_name") or FIXED_ALERT_TYPES.get(fields.get("layout")),
+                         "status": row.get("status"), "notes": row.get("notes") or "", "spans": len(row["spans"]),
+                         "detections": len(dets), "alert_field": sum(d.get("rule") == "host:alert_field" for d in dets),
+                         "labeled": sum(same_class_overlap(d, row["spans"]) for d in dets)})
+        return {"tickets": rows, "source": self.label_check_source}
+
+    def alert_label_open(self, body: dict) -> dict:
+        """The analysis of one labeled alert ticket, masked as on the labeling tab, with the label's spans
+        and notes, and whether each detection overlaps a labeled span."""
+        tid = str(body.get("ticket_id") or "")
+        if tid not in self.label_check:
+            raise ValueError("That ticket is not one of the labeled alert tickets")
+        t, row = self.label_check[tid]
+        result = analyze(masked_ticket(t), self.bundle, self.names, host_threshold=body.get("host_threshold"),
+                         instance_threshold=body.get("instance_threshold"))
+        for d in result["detections"]:
+            d["labeled"] = same_class_overlap(d, row["spans"])
+        texts = {f: result["ticket"][f] or "" for f in ("subject", "description")}
+        result["labels"] = {"labeler": row.get("labeler"), "labeled_at": row.get("labeled_at"),
+                            "status": row.get("status"), "notes": row.get("notes") or "",
+                            "spans": [{**s, "text": texts[s["field"]][s["start"]:s["end"]],
+                                       "found": same_class_overlap(s, result["detections"])} for s in row["spans"]]}
+        return result
+
     def info(self) -> dict:
         directory, model = self.bundle["directory"], self.bundle["model"]
         clients = sorted(({"key": k, "name": self.names.get(k) or (k[5:] if k.startswith("name:") else k),
@@ -328,7 +340,7 @@ class App:
                 "directory": directory.stats(), "zendesk": self.subdomain if self.zendesk else None,
                 "labeling": {"sample": len(self.queue.order), "overlap": self.queue.progress()["overlap_tickets"]}
                 if self.queue else None,
-                "alert_types": len(self.catalog),
+                "alert_types": len(self.catalog), "alert_labels": len(self.label_check),
                 "ticket_types": {"tickets": self.types["tickets"], "created_at": self.types.get("created_at"),
                                  "alert_names": len(self.alert_map)} if self.types else None}
 
@@ -437,6 +449,7 @@ def make_handler(app: App):
                       "/api/label/next": app.label_next, "/api/label/open": app.label_open,
                       "/api/label/save": app.label_save, "/api/label/mine": app.label_mine,
                       "/api/alert-types": app.alert_types, "/api/alert-types/example": app.alert_example,
+                      "/api/alert-labels": app.alert_labels, "/api/alert-labels/open": app.alert_label_open,
                       "/api/taxonomy": app.taxonomy, "/api/classify": app.classify_text}
             route = routes.get(self.path.split("?")[0])
             if not route:
@@ -481,7 +494,8 @@ def make_app(model_path: Path, train_path: Path, port: int, *, zendesk_mode: str
              label_tickets: Path | None = None, label_sample: int = 200, label_kind: str = "human",
              label_overlap: float = 0.15, label_seed: int = 0, labels_path: Path = sl.LABELS_PATH,
              allowed_hosts: set[str] | None = None, alert_tickets: list[Path] | None = None,
-             types_path: Path | None = None) -> App:
+             types_path: Path | None = None, check_labels: Path | None = None,
+             check_tickets: Path | None = None) -> App:
     if not model_path.exists():
         raise SystemExit(f"No model at {model_path}. Run: python -m tools.server_detector train")
     bundle = sd.load_model(model_path)
@@ -511,7 +525,13 @@ def make_app(model_path: Path, train_path: Path, port: int, *, zendesk_mode: str
     types = ttt.load_or_train(types_path or tt.MODEL_PATH, tickets=tickets)
     alert_map = tt.load_alert_map()
     print(f"Taxonomy {tt.TAXONOMY_VERSION}: {len(alert_map)} alert names in the alert table")
-    return App(bundle, names, zendesk, subdomain, port, queue, allowed_hosts, catalog, types, alert_map)
+    label_check, source = {}, ""
+    if check_labels and check_tickets and check_labels.exists() and check_tickets.exists():
+        label_check = labeled_alerts(sl.load_labels(check_labels), read_jsonl(check_tickets))
+        source = f"{check_labels.name} on {check_tickets.name}"
+        print(f"Alert labels: {len(label_check)} labeled alert tickets in {source}")
+    return App(bundle, names, zendesk, subdomain, port, queue, allowed_hosts, catalog, types, alert_map,
+               label_check, source)
 
 
 def main():
@@ -521,7 +541,8 @@ def main():
                    label_tickets=args.label_tickets, label_sample=args.label_sample, label_kind=args.label_kind,
                    label_overlap=args.label_overlap, label_seed=args.label_seed, labels_path=args.labels_path,
                    allowed_hosts=allowed_host_names(args.host, args.port, args.allow_host),
-                   alert_tickets=args.alert_tickets)
+                   alert_tickets=args.alert_tickets, check_labels=args.check_labels,
+                   check_tickets=args.check_tickets)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(app))
     url = f"http://127.0.0.1:{args.port}/"
     print(f"Server detector UI at {url} (model {app.bundle.get('created_at')}, "

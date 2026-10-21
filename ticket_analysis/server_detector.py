@@ -31,11 +31,12 @@ from sklearn.preprocessing import MaxAbsScaler
 
 from .alert_parser import COLLECTOR_LABELS, FIRING_LABELS, SERVER_FIELDS
 from .names import ParsedName, parse_server_name
-from .paths import DATA_DIR, INSTANCES_PATH
+from .paths import DATA_DIR
 
 MODEL_PATH = DATA_DIR / "models" / "server_detector.joblib"
 DEFAULT_MAX_CHARS = 20_000  # description characters read per ticket
 DEFAULT_THRESHOLD = 0.5  # used only when no validation split is available
+KNOWLEDGE_CACHE_LIMIT = 100_000  # per-name feature results kept per directory; cleared when full
 TOP_PATTERNS = 60  # compressed patterns kept as one-hot features; the rest are "other"
 DEFAULT_INSTANCE = "mssqlserver"  # stored as a host-level record, as match_mention() assumes
 
@@ -46,8 +47,9 @@ DEFAULT_INSTANCE = "mssqlserver"  # stored as a host-level record, as match_ment
 TOKEN_RE = re.compile(r"[A-Za-z0-9_\\.\-,:$#]+")
 SENTENCE_RE = re.compile(r"[.!?](?=\s)|\n")
 # The value ends at ; or a quote, as in a connection string, or at whitespace, since server names have
-# none: "Server=sql01,1433 is down" in prose marks sql01,1433 only, not the rest of the line.
-CONN_RE = re.compile(r"(?i)\b(?:server|data\s+source|address|addr|network\s+address)\s*=\s*([^;'\"\s]+)")
+# none: "Server=sql01,1433 is down" in prose marks sql01,1433 only, not the rest of the line. It also
+# ends at a parenthesis, so an Oracle TNS descriptor's ADDRESS=(PROTOCOL=TCP)(HOST=...) is not one value.
+CONN_RE = re.compile(r"(?i)\b(?:server|data\s+source|address|addr|network\s+address)\s*=\s*([^;'\"\s()]+)")
 SERVICE_RE = re.compile(r"(?i)^(mssql|sqlagent|sqlserveragent|reportserver|mssqlfdlauncher|sqltelemetry|msolap|"
                         r"mssqlserverolapservice|sqlwriter)\$([A-Za-z0-9_#\-]+)$")
 IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
@@ -261,7 +263,8 @@ def ticket_client_keys(ticket: dict) -> tuple[str | None, str | None]:
 
 
 class LocalServerDirectory:
-    """Known names from local sources: server-shaped alert fields, dw_servers and data/instances.csv.
+    """Known names per client: server-shaped alert fields, dw_servers and CMDB records. Training builds
+    one from the local files (tools.directory_build); the API restores one from a snapshot (from_dict).
     Each client is keyed by its Zendesk organization id, or by its name when it has none; a name seen
     with an id is an alias for that id. Names from alert fields and the CMDB export are also kept as
     confirmed (CONFIRMED_SOURCES), with the environment those sources give."""
@@ -292,51 +295,52 @@ class LocalServerDirectory:
             if environment:
                 self._env[(key, parsed.host)][environment] += 1
 
-    def add_ticket(self, ticket: dict) -> None:
-        org, name_key = ticket_client_keys(ticket)
-        for parsed in ticket_names({"dw_servers": ticket.get("dw_servers")}):
-            self.add(org, name_key, parsed, "dw")
-        env = alert_environment(ticket)
-        for parsed in ticket_names({"alert_fields": ticket.get("alert_fields")}):
-            self.add(org, name_key, parsed, "alert", env)
+    def add_cmdb_record(self, org, client_name, server_name, environment=None) -> tuple[str, ParsedName] | None:
+        """One CMDB server record (a row of data/instances.csv). Returns the client key and the parsed
+        name, or None when the name is not server-shaped (counted in skipped) or no client is given."""
+        parsed = normalize_reference(server_name)
+        if not parsed:
+            self.skipped += 1
+            return None
+        org = str(org or "").strip() or None
+        name = (client_name or "").strip().lower()
+        name_key = f"name:{name}" if name else None
+        self.add(org, name_key, parsed, "cmdb", (environment or "").strip() or None)
+        return (org or name_key, parsed) if org or name_key else None
 
-    def add_instances_csv(self, path: Path) -> None:
-        import csv
-        with path.open(encoding="utf-8-sig", newline="") as f:
-            for row in csv.DictReader(f):
-                parsed = normalize_reference(row.get("server_name"))
-                if not parsed:
-                    self.skipped += 1
-                    continue
-                org = (row.get("zendesk_organization_id") or "").strip() or None
-                name = (row.get("client_name") or "").strip().lower()
-                self.add(org, f"name:{name}" if name else None, parsed, "cmdb",
-                         (row.get("environment") or "").strip() or None)
+    def to_dict(self) -> dict:
+        """Every name as stored, per client key, for a directory snapshot: hosts with whether a confirmed
+        source named them and the environments those sources gave (with counts), (host, instance) pairs
+        with the same flag, and the name-to-organization aliases. from_dict() restores an identical copy."""
+        keys = sorted(set(self._hosts) | set(self._pairs))
+        clients = {}
+        for key in keys:
+            hosts = [{"host": h, "confirmed": h in self._confirmed_hosts.get(key, ()),
+                      "environments": dict(sorted(self._env.get((key, h), {}).items()))}
+                     for h in sorted(self._hosts.get(key, ()))]
+            pairs = [{"host": h, "instance": i, "confirmed": (h, i) in self._confirmed_pairs.get(key, ())}
+                     for h, i in sorted(self._pairs.get(key, ()))]
+            clients[key] = {"hosts": hosts, "instances": pairs}
+        return {"clients": clients, "aliases": dict(sorted(self._alias.items()))}
 
     @classmethod
-    def from_sources(cls, tickets: list[dict], instances_path: Path | None = INSTANCES_PATH) -> "LocalServerDirectory":
+    def from_dict(cls, data: dict) -> "LocalServerDirectory":
         d = cls()
-        for t in tickets:
-            d.add_ticket(t)
-        if instances_path and Path(instances_path).exists():
-            d.add_instances_csv(Path(instances_path))
-        return d
-
-    def without(self, hosts=frozenset(), instances=frozenset()) -> "LocalServerDirectory":
-        """A copy with the given hosts (and their pairs) and instance names removed."""
-        d = LocalServerDirectory()
-        d._alias = dict(self._alias)
-        for src, dst in ((self._hosts, d._hosts), (self._confirmed_hosts, d._confirmed_hosts)):
-            for key, hs in src.items():
-                kept = {h for h in hs if h not in hosts}
-                if kept:
-                    dst[key] = kept
-        for src, dst in ((self._pairs, d._pairs), (self._confirmed_pairs, d._confirmed_pairs)):
-            for key, ps in src.items():
-                kept = {(h, i) for h, i in ps if h not in hosts and i not in instances}
-                if kept:
-                    dst[key] = kept
-        d._env.update({k: Counter(v) for k, v in self._env.items() if k[1] not in hosts})
+        for key, entry in (data.get("clients") or {}).items():
+            for r in entry.get("hosts") or ():
+                d._hosts[key].add(r["host"])
+                if r.get("confirmed"):
+                    d._confirmed_hosts[key].add(r["host"])
+                if r.get("environments"):
+                    d._env[(key, r["host"])].update(r["environments"])
+            for r in entry.get("instances") or ():
+                pair = (r["host"], r["instance"])
+                d._hosts[key].add(r["host"])
+                d._pairs[key].add(pair)
+                if r.get("confirmed"):
+                    d._confirmed_pairs[key].add(pair)
+                    d._confirmed_hosts[key].add(r["host"])
+        d._alias = dict(data.get("aliases") or {})
         return d
 
     def _keys(self, client_key: str | None) -> list[str]:
@@ -530,10 +534,10 @@ class Knowledge:
     def near_known_host(self, client: str | None, name: str) -> str | None:
         """The client's known host this name is a typo or sibling of (see near_match), or None."""
         key = ("near", client, name)
-        if key not in self._cache:
-            relation, known = near_match(name, self.profile(client, "host").names)
-            self._cache[key] = known if relation in ("typo", "sibling") else None
-        return self._cache[key]
+        if key in self._cache:
+            return self._cache[key]
+        relation, known = near_match(name, self.profile(client, "host").names)
+        return self._remember(key, known if relation in ("typo", "sibling") else None)
 
     def dictionary(self, client: str | None) -> tuple[frozenset, frozenset, frozenset]:
         """(hosts, (host, instance) pairs, instance names) confirmed for the client; empty when unknown."""
@@ -565,8 +569,15 @@ class Knowledge:
                # adds nothing instead of looking like "unlike every known name".
                f"{p}_sim": 1.0 - min(dist / max(len(name), 1), 1.0) if others else 0.0,
                f"{p}_other_conv": float(bool(other) and not own_prefix and not own_pattern)}
-        self._cache[key] = out
-        return out
+        return self._remember(key, out)
+
+    def _remember(self, key, value):
+        """Cache a per-name result. The cache is cleared when full: the API keeps one Knowledge per
+        directory for days, and every new token in caller text would otherwise add an entry."""
+        if len(self._cache) >= KNOWLEDGE_CACHE_LIMIT:
+            self._cache.clear()
+        self._cache[key] = value
+        return value
 
 
 def build_stop_words(tickets: list[dict], directory: ServerDirectory, min_share: float = 0.005,
@@ -629,6 +640,10 @@ def token_parts(raw: str, start: int) -> list[tuple[int, int, frozenset]]:
         m = re.fullmatch(r"([^:]+):(\d{2,5})", raw)
         if m:
             return [(start, start + len(m.group(1)), frozenset({"port"}))]
+        m = re.fullmatch(r"([^:]+):(\d{2,5}):([A-Za-z][A-Za-z0-9_$#]*)", raw)  # JDBC thin @host:1521:SID
+        if m:
+            return [(start, start + len(m.group(1)), frozenset({"port"})),
+                    (start + m.start(3), start + len(raw), frozenset({"oracle"}))]
         return _split(raw, start, ":")
     if "," in raw:
         if re.fullmatch(r"[^,]+,\d{2,5}", raw):
@@ -680,6 +695,7 @@ def ticket_candidates(ticket: dict, know: Knowledge, *, alert_context: str = "st
     words = [t[0].lower() for t in tokens]
     breaks = [m.start() for m in SENTENCE_RE.finditer(text)]
     conn = [m.span(1) for m in CONN_RE.finditer(text)]
+    oracle_ticket = bool(ORACLE_RE.search(text))
     client = know.directory.client_for(ticket)
     # The servers an alert names in its own parsed fields (Server, Host(s), ServerName and the like)
     alert_hosts = frozenset(p.host for p in ticket_names({"alert_fields": ticket.get("alert_fields")})) \
@@ -695,7 +711,7 @@ def ticket_candidates(ticket: dict, know: Knowledge, *, alert_context: str = "st
         window_cue = any(w in INSTANCE_CUES or w.startswith(SERVICE_PREFIXES) for w in window)
         host_cue = _after_host_word(*_previous_words(words, ti))
         for s, e, flags in parts:
-            c = _candidate(text, s, e, flags, know, window_cue, conn, client, host_cue)
+            c = _candidate(text, s, e, flags, know, window_cue, conn, client, host_cue, oracle_ticket)
             if not c:
                 continue
             c.update(ti=ti, sent=bisect.bisect_left(breaks, s), ctx=" ".join(window))
@@ -707,7 +723,7 @@ def ticket_candidates(ticket: dict, know: Knowledge, *, alert_context: str = "st
 
 
 def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, window_cue: bool, conn,
-               client: str | None = None, host_cue: bool = False) -> dict | None:
+               client: str | None = None, host_cue: bool = False, oracle_ticket: bool = False) -> dict | None:
     part = text[s:e]
     parsed = parse_server_name(part)
     if not parsed:
@@ -719,16 +735,21 @@ def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, win
             "in_url": text[max(0, s - 2):s] == "//", "service": "service" in flags,
             "has_port": parsed.port is not None or "port" in flags or text[max(0, s - 4):s].lower() == "tcp:",
             "after_label": _after_label(text, s),
-            "is_ip": bool(IPV4_RE.match(host)), "sql_port": _sql_port(text, s, e, part)}
+            "is_ip": bool(IPV4_RE.match(host)), "db_port": _db_port(text, s, e, part)}
     if "\\" in part:
         if not (host_name_ok(host, 2) and instance and INSTANCE_RE.match(instance)):
             return None
         return {**base, "kind": "host_instance", "host": host, "instance": instance, "name": f"{host}\\{instance}",
                 "host_ok": True, "inst_ok": False, "cue": window_cue}
+    if _oracle_name(text, s, e, flags, know, oracle_ticket):
+        # An Oracle SID or service name (a service name may be dotted): an instance, never a host
+        return {**base, "kind": "token", "host": host, "instance": None, "name": host,
+                "host_ok": False, "inst_ok": True, "cue": True, "oracle": True}
     head = part.split(",")[0]
     dotted = "." in head and not base["is_ip"]
     is_file = dotted and head.rsplit(".", 1)[-1].lower() in FILE_EXTS
-    email = text[e:e + 1] == "@" or text[max(0, s - 1):s] == "@"
+    # user@host:1521 (EZConnect, JDBC) is a host with a port, not an email address
+    email = (text[e:e + 1] == "@" or text[max(0, s - 1):s] == "@") and "port" not in flags
     strong = in_conn or in_unc or base["has_port"]
     # A confirmed host of the client stays a candidate even when it is a frequent word, if it has a digit
     # or punctuation or follows a server word (so prose mentions of a word-like name do not become noisy
@@ -747,13 +768,50 @@ def _candidate(text: str, s: int, e: int, flags: frozenset, know: Knowledge, win
             "host_ok": host_ok, "inst_ok": inst_ok, "cue": cue}
 
 
-def _sql_port(text: str, s: int, e: int, part: str) -> bool:
-    """True for a port written the SQL Server way: HOST,PORT, tcp:HOST, or a colon port of 1433 or
-    1434. Other colon ports (host:8080, site:443) are web addresses."""
+# Oracle SIDs and service names. Oracle syntax always counts: SID= or SID:, SERVICE_NAME, ORACLE_SID,
+# GLOBAL_NAME, DB_UNIQUE_NAME, a TNS (SID = X), EZConnect host:1521/SERVICE and JDBC @host:1521:SID.
+# Prose ("SID ORCL", "service name PRODCDB", "PDB SALESPDB", "the ORCLPRD database") counts only in a
+# ticket that mentions Oracle, for an upper-case name that is not a frequent word.
+ORACLE_RE = re.compile(r"(?i)oracle")
+ORACLE_KEY_RE = re.compile(r"(?i)(?:\b(?:oracle_sid|sid|service_name|global_name|db_unique_name)\s*[=:]\s*\(?\s*"
+                           r"|:(?:1521|1522|1526|2484)/)$")
+ORACLE_BEFORE_RE = re.compile(r"(?i)\b(?:sid|service\s+name|[pc]db|pluggable\s+database|container\s+database"
+                              r"|database|db)\s+$")
+ORACLE_AFTER_RE = re.compile(r"(?i)^\s+(?:database|db|[pc]db|sid)\b")
+ORACLE_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]{0,29}(?:\.[A-Za-z0-9_\-]+){0,5}$")
+NOT_ORACLE = frozenset({"oracle", "mssqlserver", "sqlserveragent", "sql", "mysql", "rac", "asm", "rman", "dba",
+                        "tns", "sid", "pdb", "cdb", "db", "none", "null", "unknown"})
+
+
+def _oracle_name(text: str, s: int, e: int, flags: frozenset, know: Knowledge, oracle_ticket: bool) -> bool:
+    """True when text[s:e] is written as an Oracle SID or service name (see ORACLE_KEY_RE)."""
+    part = text[s:e]
+    if not ORACLE_NAME_RE.match(part) or part.lower() in NOT_ORACLE or SERVICE_RE.match(part):
+        return False
+    if "oracle" in flags:
+        return True
+    before = text[text.rfind("\n", 0, s) + 1:s]
+    if ORACLE_KEY_RE.search(before):
+        return True
+    end = text.find("\n", e)
+    after = text[e:] if end < 0 else text[e:end]
+    return (oracle_ticket and part == part.upper() and len(part) >= 3 and part.lower() not in know.stop
+            and bool(ORACLE_BEFORE_RE.search(before) or ORACLE_AFTER_RE.match(after)))
+
+
+# Colon ports that mark a database server: SQL Server, MySQL and MariaDB, PostgreSQL, Oracle, MongoDB,
+# and the Prometheus exporters that run on database hosts (mysqld, postgres, sql_exporter, oracledb)
+DB_PORTS = frozenset({"1433", "1434", "3306", "33060", "5432", "1521", "1522", "27017",
+                      "9104", "9187", "9399", "9161"})
+
+
+def _db_port(text: str, s: int, e: int, part: str) -> bool:
+    """True for a port written the SQL Server way (HOST,PORT or tcp:HOST) or a colon port in DB_PORTS.
+    Other colon ports (host:8080, site:443) are web addresses."""
     if "," in part or text[max(0, s - 4):s].lower() == "tcp:":
         return True
     m = re.match(r":(\d{2,5})(?!\d)", text[e:e + 6])
-    return bool(m) and m.group(1) in ("1433", "1434")
+    return bool(m) and m.group(1) in DB_PORTS
 
 
 def _previous_words(words: list[str], ti: int) -> tuple[str, str]:
@@ -772,7 +830,7 @@ def _after_host_word(prev1: str, prev2: str) -> bool:
 
 def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | None = None) -> str | None:
     """The name of the rule that marks this candidate as a host or an instance, or None. Instance
-    rules: an MSSQL$ or SQLAgent$ service suffix, '<name> instance', 'instance <name>' and 'instance
+    rules: an Oracle SID or service name (see _oracle_name), an MSSQL$ or SQLAgent$ service suffix, '<name> instance', 'instance <name>' and 'instance
     named <name>'. Host rules: HOST\\INSTANCE whose host has a digit, is known or is in a connection
     string; a connection-string value; a UNC host; a name with a port or tcp:; and a name with a
     digit after server, host, vm and the like, or after 'instance on'. Alert template lines
@@ -803,6 +861,8 @@ def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | Non
     own_hosts = know.profile(client, "host").names
     if c["kind"] == "token" and c["host_ok"] and has_digit and name in own_hosts:
         return "host:known_name"
+    if c.get("oracle"):
+        return "instance:oracle"
     if c["inst_ok"] and c["kind"] == "token" and name not in FILLER_WORDS:
         if name in dict_instances and c["cue"] and not c["after_label"]:
             return "instance:dictionary"
@@ -831,7 +891,7 @@ def _rule(c: dict, words: list[str], ti: int, know: Knowledge, client: str | Non
         return "host:connection_string"
     if c["in_unc"]:
         return "host:unc_path"
-    if c["has_port"] and c["sql_port"]:
+    if c["has_port"] and c["db_port"]:
         return "host:port"
     if has_digit and not c["is_ip"] and (prev1 in HOST_CUE_WORDS | {"instance"}
                                          or (prev1 == "on" and prev2 in HOST_CUE_WORDS | {"instance"})):
@@ -984,9 +1044,19 @@ class ServerModel:
 
     def knowledge(self, directory: ServerDirectory) -> Knowledge:
         key = id(directory)
-        if key not in self._know or self._know[key].directory is not directory:
-            self._know[key] = Knowledge(directory, self.stop)
-        return self._know[key]
+        know = self._know.get(key)
+        if know is None or know.directory is not directory:
+            know = Knowledge(directory, self.stop)
+            self._know[key] = know
+        return know  # not self._know[key]: forget_knowledge() on the refresh thread may pop it meanwhile
+
+    def forget_knowledge(self, keep=()) -> None:
+        """Drop the cached Knowledge of every directory not in keep, so a service that swaps in new
+        directories does not hold on to the old ones."""
+        kept = {id(d) for d in keep}
+        for key in list(self._know):  # a copy: inference threads may add entries meanwhile
+            if key not in kept:
+                self._know.pop(key, None)
 
     def fit(self, examples: list[dict]) -> "ServerModel":
         y = [c["label"] for c in examples]
@@ -1034,6 +1104,22 @@ def decide(p_host: float, p_inst: float, host_threshold: float, instance_thresho
 
 
 # --- Detection, pairing and status ---------------------------------------------
+
+# What detect_servers() returns in 'kind' and 'status', with a one-line meaning each (the API's catalog).
+KINDS = {
+    "host": "A server name on its own (its default instance, MSSQLSERVER, counts as the server).",
+    "host_instance": "A HOST\\INSTANCE name: a named instance on a given server.",
+    "bare_instance": "A named instance written without its server; 'host' is set when it could be paired.",
+}
+STATUSES = {
+    "known": "The client's known names include this host, pair or instance.",
+    "new_instance_on_known_host": "The host is known for the client but this instance on it is not.",
+    "possible_new_host": "Not among the client's known hosts (or the client is unknown).",
+    "possible_new_instance": "A bare instance the client is not known to have, or paired with a host that does not list it.",
+    "ambiguous": "A bare instance that several of the client's hosts have; those hosts are its candidates.",
+    "typo_of_known": "One edit away from a known name of the client with the same shape; the known name replaces it.",
+}
+FIELDS = {"subject": "The ticket subject.", "description": "The ticket description (its first comment)."}
 
 
 def _evidence(text: str, start: int, end: int, width: int = 40) -> str:

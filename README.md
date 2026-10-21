@@ -12,6 +12,7 @@ LLM, and an LLM classifier path measures what a single Claude call can do.
 | Folder | Holds |
 | --- | --- |
 | ticket_analysis/ | What the API ships: alert parsing, secret masking, text cleaning, server detection, type classification and the taxonomy. It never imports from tools/, and requirements.txt is all it needs. |
+| api/ | The ticket analysis API (FastAPI and MCP) over the package: the service layer, auth, directory snapshots and the refresh job. It imports only ticket_analysis; its image installs only requirements-api.txt. See docs/api.md. |
 | tools/ | Data loading, the LLM run workflow, training, evaluation, labeling and the review pages. Run each as `python -m tools.<name>` from the repository root. |
 | prompts/ | LLM prompt versions. |
 | docs/ | Design notes, build prompts and export queries. |
@@ -40,12 +41,13 @@ LLM, and an LLM classifier path measures what a single Claude call can do.
     cd C:\src\ticket-classifier-poc
     C:\Python314\python.exe -m venv .venv
     .\.venv\Scripts\Activate.ps1
-    pip install -r requirements-tools.txt  # the package, the tools and pytest
+    pip install -r requirements-tools.txt  # the package, the API, the tools and pytest
     Copy-Item .env.example .env            # then fill in the values
     python -m pytest                       # unit tests; no network access
 
-requirements.txt alone is what the ticket_analysis package needs; the tools
-also need requirements-tools.txt.
+requirements.txt alone is what the ticket_analysis package needs;
+requirements-api.txt adds the API (the image installs only that file), and
+requirements-tools.txt adds the tools and tests on top.
 
 `.env` values:
 
@@ -54,6 +56,25 @@ also need requirements-tools.txt.
 | ANTHROPIC_API_KEY | Anthropic API key (a workspace with a spend limit) |
 | ZENDESK_SUBDOMAIN | e.g. fortifieddata |
 | ZENDESK_EMAIL / ZENDESK_API_TOKEN | Agent email and API token; the code only issues GET requests |
+
+## Ticket analysis API
+
+    python -m api --local                  # http://127.0.0.1:8000/docs, local models, no auth
+    python -m api --local --auth api_key   # with API_KEYS from .env
+    python -m api.mcp_server               # the MCP tools over stdio
+    python -m api.refresh_directory --local   # a known-names snapshot from data/instances.csv
+    python -m api.export_openapi           # regenerate docs/openapi.yaml
+    python -m tools.directory_effect       # detection with a snapshot against the model's directory
+    docker compose up --build              # the Azure image with data/ mounted read-only
+
+`POST /v1/detect`, `/v1/classify` and `/v1/analyze` take one ticket's text
+(optional subject and Zendesk organization id) and return the detected
+servers and instances, the taxonomy type and intent, or both; `GET
+/v1/catalog` lists every key and value they can contain. The same operations
+are MCP tools at `/mcp`. The contract is docs/openapi.yaml; settings, local
+runs and the directory snapshots are in docs/api.md, the Azure Container Apps
+deployment in docs/azure-deploy.md, and example requests in
+docs/api-examples.http and docs/api-examples.ps1.
 
 ## Inputs
 
@@ -87,6 +108,8 @@ also need requirements-tools.txt.
     python -m tools.claude_pack labels                   # server-labeling batches for a Claude chat (docs/claude-labeling-prompt.md)
     python -m tools.claude_pack taxonomy                 # digest of all tickets for a taxonomy chat (docs/claude-taxonomy-prompt.md)
     python -m tools.claude_pack import-labels data\claude_pack\returned\labels_*.jsonl
+    .\tools\claude_relabel.ps1                           # relabel Claude's server-name label sets with the Claude Code CLI
+    python -m tools.retrain --dry-run                    # retrain both models and gate them (see Scheduled retraining)
     python -m tools.claude_pack types                    # a round of type-labeling batches for Claude Desktop (see Labeling)
     python -m tools.claude_pack import-types data\claude_pack\returned\types_round_001_*.jsonl
 
@@ -248,6 +271,7 @@ macro F1):
 | Cleaning for the model | 73.3% / 65.3% | 78.8% / 65.8% | 56.5% / 43.5% | 82.7% / 67.4% | 70.9% | 94.1% | 46.2% | 79.5% |
 | Rules (kept) | 74.0% / 65.6% | 79.7% / 66.8% | 56.5% / 43.2% | 83.2% / 67.6% | 73.2% | 94.0% | 44.4% | 79.5% |
 | Both | 73.8% / 65.7% | 79.2% / 66.4% | 57.1% / 44.1% | 82.7% / 67.4% | 72.5% | 94.1% | 46.2% | 79.5% |
+| Rules + database_refresh + ha_terms (2026-10-19) | 75.0% / 66.6% | 80.6% / 67.6% | 57.8% / 45.1% | 83.2% / 67.6% | 73.2% | 94.0% | 50.0% | 80.5% |
 
 Averaged over five cross-validation seeds, cleaning the model's input lowered
 type accuracy from 74.5% to 73.8% (from 75.2% to 74.4% with the rules on), so
@@ -256,7 +280,11 @@ the model reads the raw text and cleaning serves the rules only. The rules
 precision; access_request 11 fires, 91%) add 0.7 points of type accuracy.
 The access_request rule was tightened once against the labels (refresh,
 restore, script and narrower staff-account exclusions), so its precision is
-slightly optimistic.
+slightly optimistic. Two rules added on 2026-10-19: database_refresh (5 fires,
+100%) and ha_terms (30 fires, 96.7%; the model alone was right on 24 of them),
+which raised replication_ha_dr F1 from 70.3% to 77.5%. ha_terms' terms were
+chosen from these labels, so its precision is optimistic until the bulk labels
+measure it.
 
 `tools/split_alerts.py` splits a DW2.0 .csv export or a .jsonl ticket file by its
 is_alert column into <name>_alerts and <name>_human files of the same format
@@ -268,9 +296,11 @@ neither file and are counted.
 
 ## Server and instance detector
 
-`ticket_analysis/server_detector.py` finds SQL Server hosts and named instances in ticket text
-without an LLM, including names it has never seen and instance names written
-on their own ("the REPORTS instance", "MSSQL$REPORTS"). It runs locally and
+`ticket_analysis/server_detector.py` finds database server hosts of every engine (SQL Server,
+MySQL and MariaDB, PostgreSQL, Oracle, MongoDB, cloud databases) and their instances (SQL Server
+named instances, Oracle SIDs and service names) in ticket text without an LLM, including names it
+has never seen and instance names written on their own ("the REPORTS instance", "MSSQL$REPORTS",
+"SID=ORCL"). It runs locally and
 sends nothing to any service. Training, evaluation and the commands are in
 tools/server_detector.py.
 
@@ -314,8 +344,9 @@ How it works:
 
 1. Tokens split on whitespace and punctuation but keep `\ . - _ , : $`, so
    HOST\INSTANCE, FQDNs, HOST,PORT, tcp:HOST and MSSQL$INSTANCE survive.
-   Connection-string values (Server=, Data Source=, Address=) and UNC hosts
-   are flagged. Host candidates are 3 to 63 characters with a letter, not a
+   Connection-string values (Server=, Data Source=, Address=; a value ends at
+   a parenthesis, so a TNS descriptor is not one value) and UNC hosts are
+   flagged, and a JDBC `host:1521:SID` token splits into its host and SID. Host candidates are 3 to 63 characters with a letter, not a
    stop word (a built-in list plus frequent words in human training tickets,
    minus known names), date, ticket number, KB article, error code, file name
    or email part. Instance candidates are 2 to 16 characters and are a known
@@ -352,13 +383,20 @@ How it works:
    string, UNC path or has a port (against hand labels, none of those
    detections were servers). Rules then mark unambiguous wording, and a rule
    match scores at least 0.95, so it is detected whatever the model says.
-   Instances: `MSSQL$NAME` and `SQLAgent$NAME`, `NAME instance`,
+   Instances: Oracle SIDs and service names (`instance:oracle`: SID=,
+   ORACLE_SID=, SERVICE_NAME=, a TNS descriptor, EZConnect `host:1521/NAME`
+   and JDBC `@host:1521:NAME` always; "SID NAME", "PDB NAME" or "the NAME
+   database" only in a ticket that mentions Oracle, for an upper-case name
+   that is not a frequent word), `MSSQL$NAME` and `SQLAgent$NAME`, `NAME instance`,
    `instance NAME`, `instance named NAME` (not filler words such as "the" or
    "this", and not alert template lines), and a known instance of the
-   ticket's client written in upper case. Hosts:
+   ticket's client written in upper case. Hosts: a server the alert names in
+   its own parsed fields, including Grafana's `master_host` (`host:alert_field`);
    HOST\INSTANCE whose host has a digit, is known or sits in a connection
    string (so `CORP\jsmith` logins are left to the model); connection-string
-   values; UNC hosts; names with a port or tcp:; a name with a digit after
+   values; UNC hosts; names written the SQL Server way (HOST,PORT or tcp:) or
+   with a database or exporter port (:1433, :3306, :5432, :1521, :27017, :9104
+   and the like; `user@host:1521` counts, web ports such as :8080 do not); a name with a digit after
    server, host, vm, box, machine or node, or after "instance on"; a known
    host of the client; and a near known host (one edit with the same
    pattern, or only trailing digits differ; 5 or more characters with a
@@ -398,6 +436,15 @@ probabilities. Changing a threshold re-scores the current text without
 fetching it again. The How it works tab (`#how`) walks through the layers
 (tokenizing, candidate filter, dictionary pass, rules, model, resolution)
 with a made-up example ticket and the dictionary pass's holdout results.
+The Alert labels tab (`#alert-labels`) lists the alert tickets in Claude's
+span labels (data/labels/claude_spans.jsonl on data/test_tickets.jsonl; set
+with --check-labels and --check-tickets), with each label's status, notes and
+span count against the saved model's detections. Opening one shows the
+ticket with its detections, the labeled spans, and whether each detection
+overlaps a labeled span, for checking whether a detection the label does not
+cover is wrong or the label missed the server. Secrets are masked character
+for character, and the stored alert fields are used, so the detections match
+`python -m tools.server_labels evaluate`.
 The Taxonomy tab (`#taxonomy`) lists the types and intents with their
 definitions, Claude's sample label counts, the alert tickets the alert-name
 table maps to each type, and the rules for choosing the primary type. The
@@ -407,8 +454,9 @@ table in data/claude_pack/returned/taxonomy_notes.md (and intent
 fix_incident, or provide_information when it says the condition cleared);
 anything else goes to the keyword rules in `ticket_analysis/type_rules.py` (a [Log on to ...]
 task, a Validation Results report, a single-area SIP review, a database refresh
-subject (not yet measured against the labels), a client access
-request), which read the text with email boilerplate removed, and then to
+subject, a client access request, a subject naming an availability
+group, replication, log shipping, Data Guard or a failover but not patching),
+which read the text with email boilerplate removed, and then to
 TF-IDF and logistic regression trained on Claude's 600 sample labels. A model
 type below 30% probability, or within 5 points of the second, is marked
 uncertain with the reason; in cross-validation those tickets are right about
@@ -477,7 +525,10 @@ MSSQLSERVER counts as the host alone.
 and data/instances.csv when present. Names from alert fields and the CMDB
 export are also kept as confirmed, with their environment; dw_servers names
 are known but not confirmed. `CmdbApiDirectory` is a stub that raises
-NotImplementedError and documents the expected API shape.
+NotImplementedError and documents the expected API shape. The API does not
+use the directory saved in the model file: it serves versioned snapshots
+built from the Keystone CMDB and the model's alert names (api/directory.py,
+docs/api.md).
 
 ## Labeling
 
@@ -487,6 +538,42 @@ notes. Fill them in Excel using the ids in ticket_analysis/taxonomy.json, and cl
 before the next run. The next `python -m tools.report` run computes accuracy, a confusion
 matrix, and per-class precision and recall. Existing human entries are never
 overwritten. Reports are written to data/reports/.
+
+### Server-name labels from the Claude Code CLI
+
+    .\tools\claude_relabel.ps1 -Limit 1   # one batch, to try it
+    .\tools\claude_relabel.ps1            # every remaining batch, then import and score
+
+Claude's span labels (data/labels/claude_spans.jsonl on the test file and
+claude_spans_holdout.jsonl on the training holdout) cover database servers of
+every engine: SQL Server, MySQL and MariaDB, PostgreSQL, Oracle, MongoDB and
+cloud databases, with the Windows or Linux servers they run on. Oracle SIDs and
+service names count as bare instances; MySQL, PostgreSQL and MongoDB have
+hosts only. The prompt is docs/claude-labeling-prompt.md. The first labels
+covered SQL Server only; they are kept as `*_sqlserver_only.jsonl`.
+
+`tools/claude_relabel.ps1` labels the same tickets again without Claude
+Desktop. It writes batches with `python -m tools.claude_pack labels
+--from-labels`, sends each batch to `claude -p` with the prompt as the system
+prompt, and checks each reply with `claude_pack check-reply` (every ticket
+exactly once, valid JSONL), retrying up to three times. Each call is a new
+session with no tools, MCP servers, settings or saved history, so no context
+carries over between batches. Finished batches are kept under
+data/claude_pack/relabel/, so a rerun resumes. When all batches of a set are
+done it backs up the old label file once, replaces it with the new labels and
+runs `python -m tools.server_labels evaluate`. Options: -Set test|holdout|all,
+-Model (default claude-opus-5-5), -Effort, -MaxAttempts, -Limit, -Fresh (new
+batches, earlier replies discarded). Ticket text is masked as for Claude
+Desktop and sent to Claude under your Claude Code login.
+
+    .\tools\claude_label_all.ps1 -Limit 20   # the next 20 batches of the remaining tickets
+
+`tools/claude_label_all.ps1` (`claude_relabel.ps1 -Set rest`) labels every
+ticket the two sets above do not cover, about 11,600 in some 460 batches, into
+new files: data/labels/claude_spans_train_rest.jsonl (training data) and
+claude_spans_test_rest.jsonl (scored when done). After a failed call it waits
+longer each time, and it stops after three failed batches in a row, as when a
+usage limit is reached; a rerun resumes.
 
 ### More type labels from Claude Desktop
 
@@ -515,6 +602,43 @@ taxonomy version, skips repeats, and lists tickets still missing per batch.
 tools/ticket_types.py trains on the taxonomy sample and these labels together, later
 labels winning, and leaves out labels made for another taxonomy version. Keep
 the evaluation export out of the rounds so it stays an independent test.
+
+## Scheduled retraining
+
+    python -m tools.retrain --dry-run     # train and gate, publish nothing
+    python -m tools.retrain --install     # publish a passing version and use it locally
+    python -m tools.retrain --store https://<account>.blob.core.windows.net/<container>
+
+Rule changes take effect without retraining; retrain after a batch of rule
+changes or when new labels or tickets arrive. `tools/retrain.py` trains both
+models into data/retrain/<version>/ (the version is the UTC date), then scores
+the new and the serving server detector on every span label set present
+(Claude's test and holdout sets, the rest of the test file, DBA labels) and
+cross-validates the type model with the keyword rules on. It publishes the
+version only when no host or instance F1, type or intent accuracy or macro F1
+falls more than --tolerance points (1.0) below the serving version, and every
+keyword rule that fires on at least 5 labeled tickets is still at least 90%
+precise. A passing version goes to data/models/versions/<version>/ with
+metrics.json (figures, gate result, SHA-256 of each model); --install also
+copies it into data/models/, keeping the replaced files as
+`*.before-<version>.joblib`; --store uploads it to the API's model store and
+prints the MODEL_VERSION and MODEL_SHA256 values to serve it. Promoting a
+version in the API stays a reviewed change (docs/azure-deploy.md, step 8).
+The type model's serving figures come from the serving folder's metrics.json,
+since scoring a model on the labels it learned from would flatter it; the
+first run has none and compares the server detector only. Exit code 0 means
+published, 1 not published, so a scheduler shows a failed run. Export current
+tickets from DW2.0 into data/ before it runs.
+
+Quarterly, at 03:00 on the first day of January, April, July and October:
+
+    # cron (Linux)
+    0 3 1 1,4,7,10 * cd /opt/ticket-classifier-poc && .venv/bin/python -m tools.retrain --install >> data/retrain/retrain.log 2>&1
+
+    # Windows Task Scheduler, from PowerShell (run once to register; schtasks has no
+    # quarterly schedule, so this is a monthly schedule limited to the four months)
+    schtasks /Create /TN "Ticket classifier retrain" /SC MONTHLY /M JAN,APR,JUL,OCT /D 1 /ST 03:00 `
+      /TR "cmd /c cd /d C:\src\ticket-classifier-poc && .venv\Scripts\python.exe -m tools.retrain --install >> data\retrain\retrain.log 2>&1"
 
 ## Files that carry forward to Keystone
 

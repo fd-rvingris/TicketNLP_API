@@ -7,6 +7,7 @@ import pytest
 import ticket_analysis.server_detector as sd
 import tools.server_detector as sdt
 from ticket_analysis.tickets import make_ticket
+from tools.directory_build import build_directory, without_names
 
 
 def human(tid, text, org="100", name="Acme", dw=None, subject="Help"):
@@ -14,7 +15,7 @@ def human(tid, text, org="100", name="Acme", dw=None, subject="Help"):
 
 
 def know_for(tickets, stop=sd.BUILTIN_STOP):
-    d = sd.LocalServerDirectory.from_sources(tickets, None)
+    d = build_directory(tickets, None)
     return d, sd.Knowledge(d, stop)
 
 
@@ -106,7 +107,7 @@ def directory_fixture():
         make_ticket(4, "Alert #2", "Instance Job: nightly", organization_id="100", organization_name="Acme", is_alert=1),
         human(5, "x", org=None, name="Cobalt", dw=["cob01\\PROD"]),
     ]
-    return sd.LocalServerDirectory.from_sources(tickets, None)
+    return build_directory(tickets, None)
 
 
 def test_directory_splits_host_instance_and_counts_vocabulary():
@@ -165,7 +166,7 @@ def test_sibling_and_typo_classification():
 
 
 def test_profile_features_use_own_client_only():
-    d = sd.LocalServerDirectory.from_sources(
+    d = build_directory(
         [human(1, "x", dw=["aautdb01", "aautdb02", "aautdb05"]),
          human(2, "x", org="200", name="Bolt", dw=["blt-sql-01", "blt-sql-02", "blt-sql-03"])], None)
     know = sd.Knowledge(d, sd.BUILTIN_STOP)
@@ -192,7 +193,7 @@ class FixedModel(sd.ServerModel):
 
 
 def pairing_directory():
-    return sd.LocalServerDirectory.from_sources([
+    return build_directory([
         human(1, "x", dw=["SQLA01\\REPORTS", "SQLA02\\REPORTS", "SQLA03\\FINANCE", "SQLA05"]),
     ], None)
 
@@ -274,11 +275,11 @@ def synthetic_tickets(n=120, seed=1):
 
 def test_grouped_holdouts_remove_names_from_training_and_directory():
     tickets = synthetic_tickets()
-    d = sd.LocalServerDirectory.from_sources(tickets, None)
+    d = build_directory(tickets, None)
     held_hosts = sdt.holdout_names(d.hosts(), 0.2, seed=3)
     held_inst = sdt.holdout_names(d.instance_names(), 0.34, seed=3)
     assert held_hosts and held_inst
-    dh, di = d.without(hosts=held_hosts), d.without(instances=held_inst)
+    dh, di = without_names(d, hosts=held_hosts), without_names(d, instances=held_inst)
     assert not held_hosts & set(dh.hosts()) and not {h for h, _ in dh.instances()} & held_hosts
     assert not held_inst & set(di.instance_names())
     ex_h, _ = sdt.make_examples(tickets, sd.Knowledge(dh, sd.BUILTIN_STOP), dh, alert_context="strip_labels",
@@ -300,7 +301,7 @@ def test_holdout_names_is_seeded():
 
 def test_synthetic_examples_teach_bare_instances():
     tickets = synthetic_tickets()
-    d = sd.LocalServerDirectory.from_sources(tickets, None)
+    d = build_directory(tickets, None)
     _, counts = sdt.make_examples(tickets, sd.Knowledge(d, sd.BUILTIN_STOP), d, alert_context="strip_labels",
                                  neg_ratio=None)
     assert counts["before_sampling"][("instance", "synthetic")] > 0
@@ -309,7 +310,7 @@ def test_synthetic_examples_teach_bare_instances():
 
 def test_end_to_end_finds_a_bare_instance_seen_only_inside_host_instance():
     tickets = synthetic_tickets(n=180)
-    d = sd.LocalServerDirectory.from_sources(tickets, None)
+    d = build_directory(tickets, None)
     model, counts = sdt.fit_config(tickets, d, kind="logreg", alert_context="strip_labels", instance_model=False,
                                   seed=0, max_chars=5000, neg_ratio=10)
     assert counts["examples"] > 0
@@ -323,7 +324,7 @@ def test_end_to_end_finds_a_bare_instance_seen_only_inside_host_instance():
 
 
 def test_profile_and_vocabulary_features_leave_the_name_itself_out():
-    d = sd.LocalServerDirectory.from_sources(
+    d = build_directory(
         [human(1, "x", dw=[r"aautdb01\SALES", "aautdb02", "zz9"]),
          human(2, "x", org="200", name="Bolt", dw=[r"blt-sql-01\SALES"])], None)
     know = sd.Knowledge(d, sd.BUILTIN_STOP)
@@ -353,7 +354,7 @@ def test_model_saved_by_the_script_loads_in_another_program(tmp_path):
 
 def test_client_dropout_hides_client_features_for_a_share_of_tickets():
     tickets = synthetic_tickets(n=100)
-    d = sd.LocalServerDirectory.from_sources(tickets, None)
+    d = build_directory(tickets, None)
     know = sd.Knowledge(d, sd.BUILTIN_STOP)
     _, none = sdt.make_examples(tickets, know, d, alert_context="strip_labels", neg_ratio=None, client_dropout=0.0)
     ex, half = sdt.make_examples(tickets, know, d, alert_context="strip_labels", neg_ratio=None, client_dropout=0.5)
@@ -383,6 +384,22 @@ def rules_only_model():
     ("Failover on instance abc-sql01 today", {"abc-sql01": ("host", "host:after_server_word")}),
     ("Connect to dbfake7:1433 now", {"dbfake7": ("host", "host:port")}),
     ("Connect to tcp:dbfake8 now", {"dbfake8": ("host", "host:port")}),
+    ("Connect to mysqlfake4:3306 now", {"mysqlfake4": ("host", "host:port")}),
+    ("psql to pgfake5:5432 failed", {"pgfake5": ("host", "host:port")}),
+    ("listener on orafake6:1521 is down", {"orafake6": ("host", "host:port")}),
+    ("exporter fakemaria2:9104 is not scraping", {"fakemaria2": ("host", "host:port")}),
+    ("Open webfake3:8080 now", {}),  # a web port is not a database server
+    ("Connect with SID=ORAFAKE1 please", {"ORAFAKE1": ("bare_instance", "instance:oracle")}),
+    ("export ORACLE_SID=finfake2", {"finfake2": ("bare_instance", "instance:oracle")}),
+    ("(ADDRESS=(PROTOCOL=TCP)(HOST=orafake7)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME = salespdb.corp.local))",
+     {"orafake7": ("host", "host:after_server_word"), "salespdb.corp.local": ("bare_instance", "instance:oracle")}),
+    ("sqlplus scott@orafake8:1521/FINPDB", {"orafake8": ("host", "host:port"), "FINPDB": ("bare_instance", "instance:oracle")}),
+    ("jdbc:oracle:thin:@orafake9:1521:ORCLX", {"orafake9": ("host", "host:port"), "ORCLX": ("bare_instance", "instance:oracle")}),
+    ("The Oracle SID PRODFIN1 is down", {"PRODFIN1": ("bare_instance", "instance:oracle")}),
+    ("Oracle: the HRPRD database will not open", {"HRPRD": ("bare_instance", "instance:oracle")}),
+    ("The SID PRODFIN1 is down", {}),  # prose counts only in a ticket that mentions Oracle
+    ("SQL Server: the SALESDB database is full", {}),
+    ("Oracle login failed for Windows SID S-1-5-21-1004", {}),
     ("Failover on instance db01.corp.local today", {"db01.corp.local": ("host", "host:after_server_word")}),
     (r"Data Source=fakesql02\SALES,1433;", {r"fakesql02\SALES,1433": ("host_instance", "host:host_instance")}),
     ("Server=dbfake;Database=x", {"dbfake": ("host", "host:connection_string")}),
@@ -394,7 +411,7 @@ def rules_only_model():
     ("Server(s): fakesql03, fakesql04", {"fakesql03": ("host", "host:after_server_word")}),
 ])
 def test_rules_detect_without_the_model(text, expected):
-    d = sd.LocalServerDirectory.from_sources([], None)
+    d = build_directory([], None)
     found = {x["text"]: (x["kind"], x["rule"]) for x in sd.detect_servers(human(1, text), d, rules_only_model())}
     assert found == expected
 
@@ -407,7 +424,7 @@ def test_rules_detect_without_the_model(text, expected):
     "it's fake7 again",  # a split-off "s" after a word that is not a server word
 ])
 def test_rules_do_not_fire_on_ordinary_wording(text):
-    d = sd.LocalServerDirectory.from_sources([], None)
+    d = build_directory([], None)
     assert sd.detect_servers(human(1, text), d, rules_only_model()) == []
 
 
@@ -417,13 +434,13 @@ def test_rules_do_not_fire_on_ordinary_wording(text):
     "use Server=fakesql31,1433; Database=x and see logs",
 ])
 def test_connection_string_value_ends_at_whitespace(text):
-    d = sd.LocalServerDirectory.from_sources([], None)
+    d = build_directory([], None)
     found = [(x["text"], x["rule"]) for x in sd.detect_servers(human(1, text), d, rules_only_model())]
     assert found == [("fakesql31,1433", "host:connection_string")]
 
 
 def test_frequent_words_next_to_instance_need_upper_case():
-    d = sd.LocalServerDirectory.from_sources([], None)
+    d = build_directory([], None)
     m = rules_only_model()
     m.stop = sd.BUILTIN_STOP | {"managed", "prod"}  # as if frequent in human tickets
     assert sd.detect_servers(human(1, "the managed instance is slow"), d, m) == []
@@ -433,14 +450,14 @@ def test_frequent_words_next_to_instance_need_upper_case():
 
 
 def test_instance_rules_skip_alert_template_lines():
-    d = sd.LocalServerDirectory.from_sources([], None)
+    d = build_directory([], None)
     alert = make_ticket(1, "Alert #5 CPU", "Server SQLX01\nInstance SQLX01\nSeverity High", is_alert=1)
     found = sd.detect_servers(alert, d, rules_only_model())
     assert all(x["kind"] != "bare_instance" for x in found)
 
 
 def known_names_directory():
-    return sd.LocalServerDirectory.from_sources(
+    return build_directory(
         [human(1, "x", dw=[r"aautdb01\REPORTS", "aautdb02", "appmain"])], None)
 
 
@@ -475,7 +492,7 @@ def alert(tid, fields, org="100", name="Acme"):
 
 def dictionary_directory():
     """Confirmed names from alerts (with an environment), plus dw_servers-only names."""
-    return sd.LocalServerDirectory.from_sources([
+    return build_directory([
         alert(1, {"server": "fakesql11", "environment": "Production"}),
         alert(2, {"instance": r"fakesql12\FINANCE", "env": "uat"}),
         alert(3, {"server": "payroll"}),
@@ -491,7 +508,7 @@ def test_directory_keeps_confirmed_names_and_environments_apart_from_dw_servers(
     assert d.confirmed_instances("100") == [("fakesql12", "finance")]
     assert d.environment("fakesql11", "100") == "Production" and d.environment("fakesql12", "100") == "uat"
     assert d.environment("fakeapp03", "100") is None and d.environment("fakesql11", "999") is None
-    kept = d.without(hosts={"fakesql11"})
+    kept = without_names(d, hosts={"fakesql11"})
     assert kept.confirmed_hosts("100") == ["fakesql12", "payroll"] and kept.environment("fakesql11", "100") is None
     assert d.stats()["confirmed_hosts"] == 3 and d.stats()["hosts_with_environment"] == 2
 
@@ -552,6 +569,37 @@ def test_table_alert_server_is_detected_everywhere_it_appears():
     from tests.test_alert_parser import TABLE
     t = make_ticket("9", "", TABLE)  # pasted without the alert subject: recognised by the table header
     assert sd.is_alert_ticket(t)
-    d = sd.LocalServerDirectory.from_sources([], None)
+    d = build_directory([], None)
     found = sd.detect_servers(t, d, rules_only_model())
     assert [(x["text"], x["rule"]) for x in found] == [("Q9ZZPAP07K", "host:alert_field")] * 3
+
+
+def test_grafana_master_host_is_an_alert_server():
+    t = make_ticket("8", "[WARNING] Alert : MysqlSlaveReplicationLag_Warn",
+                    "instance = fakemaria1.corp.test:9104\nmaster_host = 10.20.30.40\n", is_alert=1)
+    t["alert_fields"] = {"family": "grafana", "layout": "grafana", "instance": "fakemaria1.corp.test:9104",
+                         "master_host": "10.20.30.40"}
+    assert {p.host for p in sd.ticket_names(t)} == {"fakemaria1", "10.20.30.40"}
+    found = sd.detect_servers(t, build_directory([], None), rules_only_model())
+    assert {(x["text"], x["rule"]) for x in found} == {("fakemaria1.corp.test", "host:alert_field"),
+                                                      ("10.20.30.40", "host:alert_field")}
+
+
+def test_knowledge_survives_its_entry_being_forgotten_meanwhile():
+    class Forgetful(dict):  # forget_knowledge() on another thread, between the insert and the read
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            self.pop(key)
+    d = sd.LocalServerDirectory()
+    m = sd.ServerModel()
+    m._know = Forgetful()
+    assert m.knowledge(d).directory is d
+
+
+def test_the_knowledge_cache_is_bounded(monkeypatch):
+    monkeypatch.setattr(sd, "KNOWLEDGE_CACHE_LIMIT", 10)
+    _, know = know_for([human(1, "FAKESQL01 is down", dw=["FAKESQL01"])])
+    for i in range(50):
+        know.profile_features("100", "host", f"FAKEHOST{i:02d}")
+        know.near_known_host("100", f"FAKEHOST{i:02d}")
+    assert len(know._cache) <= 10

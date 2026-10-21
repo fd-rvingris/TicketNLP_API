@@ -9,6 +9,7 @@ import ticket_analysis.server_detector as sd
 import tools.detector_ui as ui
 from ticket_analysis.tickets import make_ticket
 from tools.common import ZendeskClient
+from tools.directory_build import build_directory
 
 
 class FixedModel(sd.ServerModel):
@@ -30,7 +31,7 @@ TRAIN = [make_ticket(1, "x", "y", organization_id="100", organization_name="Acme
 
 def app(zendesk=None, subdomain=None):
     bundle = {"model": FixedModel({"sqla01", "sqla02", "newhost07"}, {"reports"}),
-              "directory": sd.LocalServerDirectory.from_sources(TRAIN, None), "trained_on": "t.jsonl",
+              "directory": build_directory(TRAIN, None), "trained_on": "t.jsonl",
               "created_at": "2026-10-16"}
     return ui.App(bundle, ui.client_names(TRAIN), zendesk, subdomain, 8765)
 
@@ -209,3 +210,36 @@ def test_alert_types_endpoints_mask_and_analyze_the_example():
     assert r["alert_fields"]["server"] == "FAKESQL01" and any(s["field"] == "server" for s in r["alert_spans"])
     with pytest.raises(ValueError, match="Unknown alert type"):
         a.alert_example({"key": "nope"})
+
+
+def test_alert_labels_list_and_open_compare_detections_with_the_label():
+    from tests.test_alert_layouts import LABELED
+    from ticket_analysis.alert_parser import parse_alert
+    subject = "Alert #1 - FD - SQL Agent Job Failure"
+    desc = LABELED + "password=hunter2\n"
+    alert = make_ticket(1, subject, desc, is_alert=1)
+    alert["alert_fields"] = parse_alert(subject, desc)
+    alert["alert_fields"]["note"] = "password=hunter2"
+    start = desc.index("FAKESQL01")
+    labels = {("1", "claude"): {"ticket_id": "1", "labeler": "claude", "status": "done", "notes": "",
+                                "spans": [{"field": "description", "start": start, "end": start + 9, "kind": "host",
+                                           "host": "fakesql01", "instance": None}]},
+              ("2", "claude"): {"ticket_id": "2", "labeler": "claude", "status": "done", "notes": "", "spans": []},
+              ("3", "claude"): {"ticket_id": "3", "labeler": "claude", "status": "done", "notes": "", "spans": []}}
+    tickets = [alert, make_ticket(2, "Help", "Server is slow", is_alert=0)]  # 2 is human, 3 is not in the file
+    a = app()
+    a.bundle["model"].fixed_hosts.add("fakesql01")  # the fixed model gives rule matches no score of their own
+    a.label_check = ui.labeled_alerts(labels, tickets)
+    assert list(a.label_check) == ["1"]
+    assert a.info()["alert_labels"] == 1
+    row = a.alert_labels({})["tickets"][0]
+    assert row["ticket_id"] == "1" and row["spans"] == 1 and row["alert_type"] == "FD - SQL Agent Job Failure"
+    assert row["alert_field"] >= 1 and 1 <= row["labeled"] <= row["detections"]
+    r = a.alert_label_open({"ticket_id": "1"})
+    assert "hunter2" not in r["ticket"]["description"] and "hunter2" not in r["alert_fields"]["note"]
+    assert len(r["ticket"]["description"]) == len(desc)  # masked character for character
+    assert r["labels"]["spans"][0]["text"] == "FAKESQL01" and r["labels"]["spans"][0]["found"]
+    server = [d for d in r["detections"] if d["rule"] == "host:alert_field"]
+    assert server and all(d["labeled"] for d in server)
+    with pytest.raises(ValueError, match="not one of the labeled alert tickets"):
+        a.alert_label_open({"ticket_id": "2"})

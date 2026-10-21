@@ -8,6 +8,7 @@ import tools.detector_ui as ui
 import tools.server_labels as sl
 from ticket_analysis.masking import prepare_ticket_text
 from ticket_analysis.tickets import make_ticket
+from tools.directory_build import build_directory
 
 
 def human(tid, text, subject="Help", org="100", name="Acme Corp", dw=None):
@@ -144,7 +145,7 @@ class FixedModel(sd.ServerModel):
 
 def test_evaluate_against_labels_splits_known_and_new_names_and_measures_agreement(tmp_path):
     train = [human(50, "x", dw=["sqla01"])]
-    bundle = {"model": FixedModel({"sqla01", "newbox9"}), "directory": sd.LocalServerDirectory.from_sources(train, None)}
+    bundle = {"model": FixedModel({"sqla01", "newbox9"}), "directory": build_directory(train, None)}
     t = human(1, "sqla01 and newbox9 and oldbox4 are down")
     d = t["description"]
     mark = lambda name: {"field": "description", "start": d.index(name), "end": d.index(name) + len(name), "kind": "host"}
@@ -165,7 +166,7 @@ def test_evaluate_against_labels_splits_known_and_new_names_and_measures_agreeme
 
 
 def label_app(tmp_path):
-    bundle = {"model": FixedModel({"sqla01"}), "directory": sd.LocalServerDirectory.from_sources([], None)}
+    bundle = {"model": FixedModel({"sqla01"}), "directory": build_directory([], None)}
     q = sl.LabelQueue(TICKETS[:4], overlap=0, path=tmp_path / "l.jsonl")
     return ui.App(bundle, {}, None, None, 8765, q)
 
@@ -192,7 +193,7 @@ def test_label_endpoints_hand_out_mask_and_save(tmp_path):
 
 def test_label_page_masks_secrets_but_keeps_offsets(tmp_path):
     t = human(77, "Server=SQLA01;Password=Hunter2;")
-    bundle = {"model": FixedModel({"sqla01"}), "directory": sd.LocalServerDirectory.from_sources([], None)}
+    bundle = {"model": FixedModel({"sqla01"}), "directory": build_directory([], None)}
     a = ui.App(bundle, {}, None, None, 8765, sl.LabelQueue([t], overlap=0, path=tmp_path / "l.jsonl"))
     r = a.label_next({"labeler": "Pat"})
     assert "Hunter2" not in r["description"] and len(r["description"]) == len(t["description"]) and r["masked"] == 1

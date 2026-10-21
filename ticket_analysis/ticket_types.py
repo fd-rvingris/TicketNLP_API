@@ -38,6 +38,18 @@ UNCERTAIN_P = 0.30
 UNCERTAIN_GAP = 0.05
 # The taxonomy's alert intent rule: fix_incident unless the alert says the condition cleared
 RESOLVED_RE = re.compile(r"(?i)\b(cleared|resolved|succeeded|recovered|back to normal)\b")
+# Where classify() took the type and the intent from, with a one-line meaning each (the API's catalog). Each
+# keyword rule adds a type source rule:<name> (type_rules.RULES).
+TYPE_SOURCES = {
+    "model": "The local model trained on Claude's labels; check 'uncertain'.",
+    "alert_name": "The alert-name table: the alert's name decides the type.",
+    "alert_name_partly": "The alert-name table: the name usually decides, but the body can move the alert to another type.",
+    "alert_default": "The alert-name table's default for a name that does not decide the type.",
+}
+INTENT_SOURCES = {
+    "model": "The local model trained on Claude's labels.",
+    "alert_rule": "Alerts are fix_incident unless they say the condition cleared (provide_information).",
+}
 
 
 # --- Alert-name table ------------------------------------------------------------------
@@ -91,6 +103,18 @@ def features(tickets: list[dict], max_chars: int, clean: bool = False) -> np.nda
 def load_model(path: Path = MODEL_PATH) -> dict:
     """The saved type and intent model bundle (see tools/ticket_types.py)."""
     return joblib.load(path)
+
+
+def bundle_problem(bundle: dict) -> str | None:
+    """Why a loaded bundle cannot be used as it is, or None: it must be for the current taxonomy version
+    and the text cleaning setting it is scored with (tools/ticket_types.py retrains it otherwise)."""
+    if bundle.get("taxonomy_version") != TAXONOMY_VERSION:
+        return f"the type model is for taxonomy {bundle.get('taxonomy_version')}, not {TAXONOMY_VERSION}"
+    if bundle.get("clean", False) != MODEL_CLEAN:
+        return f"the type model was trained with cleaning {bundle.get('clean', False)}, not {MODEL_CLEAN}"
+    if not {"primary_type", "intent"} <= set(bundle.get("models") or {}):
+        return "the type model file has no type and intent models"
+    return None
 
 
 def _top(model, X, k: int = TOP_K) -> list[dict]:

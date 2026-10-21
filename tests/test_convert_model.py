@@ -7,6 +7,7 @@ import pytest
 
 import ticket_analysis.server_detector as sd
 from tools.convert_model import BACKUP_SUFFIX, OLD_MODULE, convert
+from tools.directory_build import build_directory
 
 REPO_ROOT = Path(__file__).parent.parent
 LOAD = ("import joblib, sys; b = joblib.load(sys.argv[1]); m = b['model']; "
@@ -56,7 +57,7 @@ def test_convert_keeps_a_trained_model_and_its_directory(tmp_path, monkeypatch):
     import tools.server_detector as sdt
     from tests.test_server_detector import human, synthetic_tickets
     tickets = synthetic_tickets(n=150)
-    directory = sd.LocalServerDirectory.from_sources(tickets, None)
+    directory = build_directory(tickets, None)
     model, _ = sdt.fit_config(tickets, directory, kind="logreg", alert_context="strip_labels", instance_model=False,
                               seed=0, max_chars=5000, neg_ratio=10)
     probe = human(999, r"Please restart FAKESQL01\REPORTS and check the FINANCE instance.", subject="Made up")
