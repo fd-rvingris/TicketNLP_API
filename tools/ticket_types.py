@@ -18,7 +18,8 @@ import joblib
 from ticket_analysis.jsonl import now_iso, read_jsonl
 from ticket_analysis.paths import DATA_DIR, REPO_ROOT
 from ticket_analysis.taxonomy import TAXONOMY, TAXONOMY_VERSION
-from ticket_analysis.ticket_types import MAX_CHARS, MODEL_CLEAN, MODEL_PATH, RETURNED_DIR, features, load_alert_map
+from ticket_analysis.ticket_types import (MAX_CHARS, MODEL_CLEAN, MODEL_PATH, RETURNED_DIR, AlertTable, features,
+                                          load_alert_table)
 from tools.baseline import build_model, read_labels
 
 LABELS_PATH = RETURNED_DIR / "taxonomy_sample_labels.jsonl"
@@ -97,18 +98,18 @@ def prompt_rules(path: Path = PROMPT_PATH) -> list[str]:
             if re.match(r"\s*(\d+\.|-)\s", line)]
 
 
-def summary(bundle: dict | None, alert_map: dict) -> dict:
+def summary(bundle: dict | None, alert_table: AlertTable | None) -> dict:
     """Types and intents with their definitions, Claude's sample label counts and the alert tickets the
     table maps to each type."""
     counts = (bundle or {}).get("counts") or {}
     alert_tickets = Counter()
-    for e in alert_map.values():
+    for e in alert_table.entries() if alert_table else []:
         alert_tickets[e["type"]] += e["tickets"]
     return {"version": TAXONOMY_VERSION,
             "types": [{**t, "sample": counts.get("primary_type", {}).get(t["id"], 0),
                        "alert_tickets": alert_tickets.get(t["id"], 0)} for t in TAXONOMY["types"]],
             "intents": [{**i, "sample": counts.get("intent", {}).get(i["id"], 0)} for i in TAXONOMY["intents"]],
-            "sample_tickets": (bundle or {}).get("tickets", 0), "alert_names": len(alert_map),
+            "sample_tickets": (bundle or {}).get("tickets", 0), "alert_names": len(alert_table or ()),
             "alert_table_tickets": sum(alert_tickets.values()), "rules": prompt_rules()}
 
 
@@ -124,7 +125,8 @@ def main(argv=None):
         args.model_path.unlink()  # train always refits
     bundle = load_or_train(args.model_path, args.labels)
     if bundle:
-        print(f"Alert table: {len(load_alert_map()):,} alert names")
+        table = load_alert_table()
+        print(f"Alert table {table.version}: {len(table):,} rows")
 
 
 if __name__ == "__main__":

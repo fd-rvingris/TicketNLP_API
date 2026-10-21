@@ -13,7 +13,7 @@ import ticket_analysis.server_detector as sd
 import tools.server_detector as sdt
 import tools.ticket_types as ttt
 from api.settings import load_settings
-from tests.test_ticket_types import NOTES, labeled
+from tests.test_ticket_types import labeled
 from ticket_analysis.names import ParsedName
 from ticket_analysis.tickets import make_ticket
 from tools.directory_build import build_directory
@@ -62,7 +62,7 @@ def trained() -> tuple[sd.ServerModel, sd.LocalServerDirectory, dict]:
     return model, directory, types
 
 
-def write_models(folder: Path, *, server: bool = True, types: bool = True, notes: bool = True) -> Path:
+def write_models(folder: Path, *, server: bool = True, types: bool = True) -> Path:
     model, directory, types_bundle = trained()
     folder.mkdir(parents=True, exist_ok=True)
     if server:
@@ -70,8 +70,6 @@ def write_models(folder: Path, *, server: bool = True, types: bool = True, notes
                      "trained_on": "made_up.jsonl"}, folder / "server_detector.joblib")
     if types:
         joblib.dump(types_bundle, folder / "ticket_types.joblib")
-    if notes:
-        (folder / "taxonomy_notes.md").write_text(NOTES, encoding="utf-8")
     return folder
 
 

@@ -243,7 +243,7 @@ def test_model_store_version_folders(tmp_path):
     settings = make_settings(tmp_path, model_store=str(tmp_path / "store"), model_version="2026-10-17",
                              model_dir=tmp_path / "cache")
     files = fetch_model_files(settings)
-    assert files.server == (tmp_path / "cache" / "server_detector.joblib").resolve() and files.notes.exists()
+    assert files.server == (tmp_path / "cache" / "server_detector.joblib").resolve() and files.types.exists()
     with make_client(tmp_path, write=False, model_store=str(tmp_path / "store"), model_version="2026-10-17",
                      model_dir=tmp_path / "cache") as c:
         assert c.post("/v1/detect", json=TICKET).json()["models"]["modelVersion"] == "2026-10-17"

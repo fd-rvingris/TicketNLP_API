@@ -18,7 +18,7 @@ next to the serving models, and publish the version only when it is not worse.
 4. Gate: no F1, accuracy or macro F1 may drop more than --tolerance points (default 1.0) below the
    serving version, and every keyword rule that fires on at least 5 labeled tickets must stay at least
    90% precise.
-5. Publish a passing version: both models, the taxonomy notes and metrics.json (figures, gate result,
+5. Publish a passing version: both models and metrics.json (figures, gate result,
    SHA-256 of each file) to data/models/versions/<version>/, and to the API's model store with --store.
    The API keeps serving its MODEL_VERSION; promoting the new version stays a reviewed change of that
    setting (docs/azure-deploy.md, step 8). --install also copies the files into data/models/ for local
@@ -54,7 +54,6 @@ from tools.baseline import run_labeled
 MODELS_DIR = DATA_DIR / "models"
 WORK_DIR = DATA_DIR / "retrain"
 SERVER_FILE, TYPES_FILE, METRICS_FILE = "server_detector.joblib", "ticket_types.joblib", "metrics.json"
-NOTES_PATH = DATA_DIR / "claude_pack" / "returned" / "taxonomy_notes.md"
 # (name, span labels, the ticket file they label); a set is scored when its label file exists
 SPAN_SETS = [("test", DATA_DIR / "labels" / "claude_spans.jsonl", DATA_DIR / "test_tickets.jsonl"),
              ("holdout", DATA_DIR / "labels" / "claude_spans_holdout.jsonl", DATA_DIR / "train_tickets.jsonl"),
@@ -157,7 +156,7 @@ def gate(server_new: dict, server_old: dict | None, types_new: dict, types_old: 
 def publish(work: Path, version: str, metrics: dict, *, versions_dir: Path, install_dir: Path | None,
             store: str | None) -> Path:
     """Copy a passing version to versions_dir/<version>/ and, as asked, into install_dir and the store."""
-    files = [work / SERVER_FILE, work / TYPES_FILE] + ([NOTES_PATH] if NOTES_PATH.exists() else [])
+    files = [work / SERVER_FILE, work / TYPES_FILE]
     (work / METRICS_FILE).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     dest = versions_dir / version
     dest.mkdir(parents=True, exist_ok=True)

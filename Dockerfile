@@ -1,6 +1,7 @@
-# The ticket analysis API for Azure Container Apps. The image holds code only: the model files, the taxonomy
-# notes and the directory snapshots are client data and come from the private Blob container at startup
-# (MODEL_STORE, DIRECTORY_STORE) or, locally, from mounted folders (docker-compose.yml).
+# The ticket analysis API for Azure Container Apps. The image holds code only, including the taxonomy and the
+# alert-name table in ticket_analysis/. The model files and the directory snapshots are client data and come
+# from the private Blob container at startup (MODEL_STORE, DIRECTORY_STORE) or, locally, from mounted folders
+# (docker-compose.yml).
 FROM python:3.14-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

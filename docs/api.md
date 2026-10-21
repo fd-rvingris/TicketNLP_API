@@ -95,7 +95,6 @@ path under `data/` except in the local profile (`python -m api --local`, `python
 | `MODEL_DIR` | `/models` | Folder the model files are loaded from (and downloaded into when `MODEL_STORE` is set) |
 | `SERVER_MODEL_FILE` | `server_detector.joblib` | Detector bundle, a file name in `MODEL_DIR` |
 | `TYPES_MODEL_FILE` | `ticket_types.joblib` | Classifier bundle, a file name in `MODEL_DIR` |
-| `TAXONOMY_NOTES_FILE` | `taxonomy_notes.md` | The alert-name table: a file name in `MODEL_DIR` (and the store's version folder) or an absolute path |
 | `MODEL_SHA256` | empty | `file=sha256` pairs, comma-separated; when set, every joblib file must match |
 | `MODEL_VERSION` | empty | The store's version folder, `models/<MODEL_VERSION>/`; reported as `models.modelVersion` |
 | `MODEL_STORE` | empty | A local folder or Blob container URL (`https://<account>.blob.core.windows.net/<container>`) holding `models/<version>/` |

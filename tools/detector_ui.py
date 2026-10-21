@@ -192,11 +192,11 @@ def fetch_ticket(zd: ZendeskClient, ticket_id: str) -> dict:
 class App:
     def __init__(self, bundle: dict, names: dict[str, str], zendesk: ZendeskClient | None, subdomain: str | None,
                  port: int, queue: sl.LabelQueue | None = None, allowed_hosts: set[str] | None = None,
-                 catalog: list[dict] | None = None, types: dict | None = None, alert_map: dict | None = None,
+                 catalog: list[dict] | None = None, types: dict | None = None, alert_table: tt.AlertTable | None = None,
                  label_check: dict[str, tuple[dict, dict]] | None = None, label_check_source: str = ""):
         self.bundle, self.names, self.zendesk, self.subdomain, self.port = bundle, names, zendesk, subdomain, port
         self.queue = queue
-        self.types, self.alert_map = types, alert_map or {}
+        self.types, self.alert_table = types, alert_table
         self.catalog = {c["key"]: c for c in catalog or []}
         self.label_check, self.label_check_source = label_check or {}, label_check_source
         self.allowed_hosts = allowed_hosts or {f"127.0.0.1:{port}", f"localhost:{port}"}
@@ -342,12 +342,12 @@ class App:
                 if self.queue else None,
                 "alert_types": len(self.catalog), "alert_labels": len(self.label_check),
                 "ticket_types": {"tickets": self.types["tickets"], "created_at": self.types.get("created_at"),
-                                 "alert_names": len(self.alert_map)} if self.types else None}
+                                 "alert_names": len(self.alert_table or ())} if self.types else None}
 
     # --- Taxonomy ----------------------------------------------------------------
 
     def taxonomy(self, body: dict) -> dict:
-        return ttt.summary(self.types, self.alert_map)
+        return ttt.summary(self.types, self.alert_table)
 
     def classify_text(self, body: dict) -> dict:
         """The taxonomy type and intent for pasted text: the alert-name table for alerts, else the
@@ -359,7 +359,7 @@ class App:
             raise ValueError("Paste some text first")
         if len(text) + len(subject) > MAX_TEXT:
             raise ValueError(f"Text is longer than {MAX_TEXT:,} characters")
-        return tt.classify(subject, text, self.types, self.alert_map)
+        return tt.classify(subject, text, self.types, self.alert_table)
 
     def analyze_text(self, body: dict) -> dict:
         text, subject = str(body.get("text") or ""), str(body.get("subject") or "")
@@ -523,14 +523,14 @@ def make_app(model_path: Path, train_path: Path, port: int, *, zendesk_mode: str
     catalog = alert_catalog(tickets)
     print(f"Alert types: {len(catalog)} types from {', '.join(p.name for p in found) or 'no ticket files'}")
     types = ttt.load_or_train(types_path or tt.MODEL_PATH, tickets=tickets)
-    alert_map = tt.load_alert_map()
-    print(f"Taxonomy {tt.TAXONOMY_VERSION}: {len(alert_map)} alert names in the alert table")
+    alert_table = tt.load_alert_table()
+    print(f"Taxonomy {tt.TAXONOMY_VERSION}: alert table {alert_table.version} with {len(alert_table)} rows")
     label_check, source = {}, ""
     if check_labels and check_tickets and check_labels.exists() and check_tickets.exists():
         label_check = labeled_alerts(sl.load_labels(check_labels), read_jsonl(check_tickets))
         source = f"{check_labels.name} on {check_tickets.name}"
         print(f"Alert labels: {len(label_check)} labeled alert tickets in {source}")
-    return App(bundle, names, zendesk, subdomain, port, queue, allowed_hosts, catalog, types, alert_map,
+    return App(bundle, names, zendesk, subdomain, port, queue, allowed_hosts, catalog, types, alert_table,
                label_check, source)
 
 

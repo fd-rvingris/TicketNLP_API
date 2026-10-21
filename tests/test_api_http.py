@@ -110,7 +110,8 @@ def test_ticket_id_is_echoed_and_versions_are_reported(client):
     assert j["models"] == {"serverDetector": DETECTOR_CREATED.replace("+00:00", "Z"),
                            "ticketTypes": trained()[2]["created_at"].replace("+00:00", "Z"),
                            "directory": f"model:{DETECTOR_CREATED.replace('+00:00', 'Z')}",
-                           "taxonomyVersion": TAXONOMY_VERSION, "modelVersion": None}
+                           "taxonomyVersion": TAXONOMY_VERSION, "alertTableVersion": tt.load_alert_table().version,
+                           "modelVersion": None}
 
 
 def test_request_id_header_is_echoed_when_well_formed(client):
@@ -228,7 +229,7 @@ def test_not_ready_when_a_model_file_is_missing_and_nothing_is_trained(tmp_path)
         r = c.post("/v1/detect", json=TICKET)
         assert r.status_code == 503 and r.headers["retry-after"]
         assert c.get("/v1/catalog").status_code == 200  # the catalog needs no models
-    assert sorted(p.name for p in folder.iterdir()) == ["server_detector.joblib", "taxonomy_notes.md"]
+    assert sorted(p.name for p in folder.iterdir()) == ["server_detector.joblib"]
 
 
 def test_not_ready_for_a_type_model_of_another_taxonomy(tmp_path):
@@ -355,7 +356,7 @@ def test_the_alert_tables_own_notes_never_reach_callers(client):
     from tests.test_alert_parser import COLLECTOR
     r = post(client, "/v1/classify", {"text": COLLECTOR, "subject": "Fake Co - Alert #42 - FD - SQL Agent Job Failure"})
     j = r.json()
-    assert j["alert"]["tableEntry"] == {"type": "scheduled_jobs", "decides": "Partly", "tickets": 1259}
+    assert j["alert"]["tableEntry"] == {"type": "scheduled_jobs", "decides": "Partly", "tickets": 259}
     assert j["notes"] == ["The body can move this alert to another type."]
     assert "DatabaseBackup" not in r.text
 

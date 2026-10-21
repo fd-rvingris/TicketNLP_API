@@ -121,7 +121,7 @@ def _json_type(prop: dict) -> str:
     return " or ".join(names) + (" or null" if nullable else "")
 
 
-def catalog_body() -> dict:
+def catalog_body(alert_table_version: str) -> dict:
     """Every key and enumerated value the responses can contain, from the code and taxonomy.json."""
     from .schemas import Detection
     props = Detection.model_json_schema()["properties"]
@@ -129,7 +129,7 @@ def catalog_body() -> dict:
     fields = [{"name": name, "type": _json_type(p), "description": p.get("description", ""),
                "values": [{"value": v, "description": d} for v, d in enums[name].items()] if name in enums else None}
               for name, p in props.items()]
-    return {"taxonomyVersion": TAXONOMY_VERSION,
+    return {"taxonomyVersion": TAXONOMY_VERSION, "alertTableVersion": alert_table_version,
             "detectionKeys": [{"key": k, "description": d} for k, d in DETECTION_KEYS.items()],
             "detectionFields": fields,
             "types": [{k: t[k] for k in ("id", "label", "definition")} for t in TAXONOMY["types"]],
@@ -144,12 +144,12 @@ class Service:
         self.executor = ThreadPoolExecutor(max_workers=settings.workers, thread_name_prefix="inference")
         self.detector: dict | None = None
         self.types: dict | None = None
-        self.alert_map: dict = {}
+        self.alert_table = tt.load_alert_table()  # ships with the code; a broken file fails here
         self.directories: DirectoryCache | None = None
         self.problem: str | None = None  # why the service is not ready, for logs
         self.versions = {"serverDetector": None, "ticketTypes": None}
         self._snapshot_store = snapshot_store
-        self._catalog = catalog_body()
+        self._catalog = catalog_body(self.alert_table.version)
         self._loading: threading.Thread | None = None
         self._closed = threading.Event()
 
@@ -166,9 +166,6 @@ class Service:
             files = fetch_model_files(self.settings)
             detector = load_server_bundle(files.server)
             types = load_types_bundle(files.types)
-            alert_map = tt.load_alert_map(files.notes)
-            if not alert_map:
-                raise ModelError(f"{files.notes.name} has no alert-name table")
         except (ModelError, StoreError, OSError) as e:
             self.problem = str(e)
             log.error("Not ready: %s", self.problem)
@@ -193,10 +190,11 @@ class Service:
         except Exception as e:  # refresh() keeps the fallback on store and snapshot errors; this is a last guard
             log.warning("Directory snapshot not loaded (%s); serving the model's own directory", type(e).__name__)
         self.versions = {"serverDetector": version, "ticketTypes": version_of(types.get("created_at"))}
-        self.alert_map, self.types, self.detector, self.directories = alert_map, types, detector, cache
+        self.types, self.detector, self.directories = types, detector, cache
         self.problem = None
-        log.info("Ready: server detector %s, ticket types %s (taxonomy %s, %d alert names), directory %s",
-                 self.versions["serverDetector"], self.versions["ticketTypes"], TAXONOMY_VERSION, len(alert_map),
+        log.info("Ready: server detector %s, ticket types %s (taxonomy %s, alert table %s with %d rows), directory %s",
+                 self.versions["serverDetector"], self.versions["ticketTypes"], TAXONOMY_VERSION,
+                 self.alert_table.version, len(self.alert_table),
                  cache.current.version)
         return True
 
@@ -255,7 +253,7 @@ class Service:
     def model_versions(self, state: DirectoryState | None = None) -> dict:
         state = state or (self.directories.current if self.directories else None)
         return {**self.versions, "directory": state.version if state else None, "taxonomyVersion": TAXONOMY_VERSION,
-                "modelVersion": self.settings.model_version or None}
+                "alertTableVersion": self.alert_table.version, "modelVersion": self.settings.model_version or None}
 
     def envelope(self, request_id: str, ticket_id: str | None, state: DirectoryState | None = None) -> dict:
         return {"requestId": request_id, "apiVersion": API_VERSION, "ticketId": ticket_id,
@@ -274,7 +272,7 @@ class Service:
 
     def _classify(self, inp: TicketInput) -> dict:
         subject = inp.subject or ""
-        body = classification_body(tt.classify(subject, inp.text, self.types, self.alert_map))
+        body = classification_body(tt.classify(subject, inp.text, self.types, self.alert_table))
         if self.settings.debug_responses:
             cleaned = clean_text(subject, inp.text)
             body["debug"] = {"cleanedSubject": cleaned[0], "cleanedText": cleaned[1],

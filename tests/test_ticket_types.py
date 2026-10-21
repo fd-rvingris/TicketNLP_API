@@ -1,24 +1,33 @@
 """Local taxonomy classification tests. All tickets and alerts are made up."""
 
+import json
+import re
+from pathlib import Path
+
+import pytest
+
 import ticket_analysis.ticket_types as tt
 import tools.ticket_types as ttt
 from tests.test_alert_parser import COLLECTOR
 from ticket_analysis.tickets import make_ticket
 
-NOTES = """# Notes
+TABLE = {"version": "test-1", "taxonomy_version": tt.TAXONOMY_VERSION,
+         "names": [
+             {"family": "backup_exception_report", "alert_name": "", "type": "backup_restore", "decides": "Yes",
+              "tickets": 412, "note": "Family decides"},
+             {"family": "collector", "alert_name": "FD - SQL Agent Job Failure", "type": "scheduled_jobs",
+              "decides": "Partly", "tickets": 1259, "note": "DatabaseBackup moves it to backup_restore"},
+             {"family": "collector", "alert_name": "errors", "type": "monitoring_tooling", "decides": "No",
+              "tickets": 2142, "note": "Inferred default"}],
+         "patterns": [
+             {"family": "firing", "pattern": "HostHighCpuLoad", "type": "performance", "decides": "Yes", "tickets": 9,
+              "note": ""}]}
 
-## Alert name to v1 type
 
-| Family | Alert name | Tickets | v1 type | Name decides | Note |
-|---|---|---:|---|---|---|
-| backup_exception_report | (blank) | 412 | backup_restore | Yes | Family decides |
-| collector | FD - SQL Agent Job Failure | 1,259 | scheduled_jobs | Partly | DatabaseBackup moves it to backup_restore |
-| collector | errors | 2,142 | monitoring_tooling | No | Inferred default |
-
-## Sample results
-
-| collector | not in the alert section | 1 | performance | Yes | |
-"""
+def write_table(folder: Path, table: dict = TABLE) -> Path:
+    path = folder / "alert_types.json"
+    path.write_text(json.dumps(table), encoding="utf-8")
+    return path
 
 TEXTS = {"backup_restore": "the nightly full backup failed, restore test needed",
          "access_security": "please grant read access to the reporting login",
@@ -36,14 +45,45 @@ def labeled(n=12):
     return tickets, labels
 
 
-def test_alert_map_reads_only_the_alert_section(tmp_path):
-    path = tmp_path / "notes.md"
-    path.write_text(NOTES, encoding="utf-8")
-    m = tt.load_alert_map(path)
-    assert set(m) == {("backup_exception_report", ""), ("collector", "fd - sql agent job failure"), ("collector", "errors")}
-    assert m[("collector", "fd - sql agent job failure")]["tickets"] == 1259
-    assert m[("collector", "errors")]["decides"] == "No"
-    assert tt.load_alert_map(tmp_path / "missing.md") == {}
+def test_alert_table_looks_up_exact_names_then_patterns(tmp_path):
+    t = tt.load_alert_table(write_table(tmp_path))
+    assert t.version == "test-1" and len(t) == 4
+    assert t.lookup("collector", "fd - SQL agent job FAILURE")["tickets"] == 1259
+    assert t.lookup("collector", "errors")["decides"] == "No"
+    assert t.lookup("backup_exception_report", "")["type"] == "backup_restore"
+    assert t.lookup("firing", "HostHighCpuLoad_Crit_FakeCo")["type"] == "performance"
+    assert t.lookup("collector", "HostHighCpuLoad_Crit_FakeCo") is None  # a pattern applies to its family only
+    assert t.lookup("collector", "Something New") is None
+    assert sorted(e["type"] for e in t.entries()) == ["backup_restore", "monitoring_tooling", "performance",
+                                                      "scheduled_jobs"]
+
+
+def test_the_shipped_alert_table_loads_for_the_current_taxonomy():
+    t = tt.load_alert_table()
+    assert t.version and len(t.names) > 40 and t.patterns
+    assert t.lookup("collector", "Long-Running Blocking Chain")["type"] == "performance"
+    assert t.lookup("firing", "HostHighCpuLoad_Crit_FakeCo")["type"] == "performance"
+    assert t.lookup("firing", "SQL_ExporterDown_FakeCo")["type"] == "monitoring_tooling"
+
+
+def _row(**change):
+    return {**TABLE["names"][1], **change}
+
+
+@pytest.mark.parametrize("table, problem", [
+    ({**TABLE, "taxonomy_version": "v0"}, "is for taxonomy v0"),
+    ({**TABLE, "names": [_row(type="no_such_type")]}, "type"),
+    ({**TABLE, "names": [_row(family="pager")]}, "unknown alert family 'pager'"),
+    ({**TABLE, "names": [_row(decides="Maybe")]}, "decides"),
+    ({**TABLE, "names": [_row(tickets=-1)]}, "tickets"),
+    ({**TABLE, "names": [_row(severity="high")]}, "severity"),
+    ({**TABLE, "names": [_row(), _row(alert_name="fd - sql agent job failure")]}, "listed twice"),
+    ({**TABLE, "patterns": [{**TABLE["patterns"][0], "pattern": "HostHigh("}]}, "pattern"),
+    ({k: v for k, v in TABLE.items() if k != "version"}, "version"),
+])
+def test_alert_table_refuses_a_broken_file(tmp_path, table, problem):
+    with pytest.raises(ValueError, match=re.escape(problem)):
+        tt.load_alert_table(write_table(tmp_path, table))
 
 
 def test_classify_uses_the_model_for_human_tickets():
@@ -55,9 +95,7 @@ def test_classify_uses_the_model_for_human_tickets():
 
 
 def test_classify_uses_the_alert_table_and_the_alert_intent_rule(tmp_path):
-    path = tmp_path / "notes.md"
-    path.write_text(NOTES, encoding="utf-8")
-    bundle, m = ttt.train(*labeled()), tt.load_alert_map(path)
+    bundle, m = ttt.train(*labeled()), tt.load_alert_table(write_table(tmp_path))
     r = tt.classify("Example Client - Alert #42 - FD - SQL Agent Job Failure", COLLECTOR, bundle, m)
     assert (r["primary_type"], r["type_source"], r["intent"]) == ("scheduled_jobs", "alert_name_partly", "fix_incident")
     assert r["alert"]["alert_name"] == "FD - SQL Agent Job Failure" and r["notes"]
@@ -94,10 +132,8 @@ def test_a_rule_decides_ahead_of_the_model_but_not_ahead_of_the_alert_table(tmp_
     bundle = ttt.train(*labeled())
     r = tt.classify("[Log on to FAKESQL01]", "the nightly full backup failed", bundle, {})
     assert (r["primary_type"], r["type_source"]) == ("staff_access", "rule:staff_logon")
-    path = tmp_path / "notes.md"
-    path.write_text(NOTES, encoding="utf-8")
     r = tt.classify("Example Client - Alert #42 - FD - SQL Agent Job Failure", COLLECTOR + "\ngrant read access to the user",
-                    bundle, tt.load_alert_map(path))
+                    bundle, tt.load_alert_table(write_table(tmp_path)))
     assert r["type_source"] == "alert_name_partly"
 
 
@@ -146,9 +182,10 @@ def test_load_or_train_refits_when_a_label_file_is_newer(tmp_path):
     assert any("newer labels" in m for m in logs)
 
 
-def test_summary_lists_taxonomy_counts_and_rules():
-    s = ttt.summary(ttt.train(*labeled()), {("collector", "x"): {"type": "performance", "tickets": 7}})
+def test_summary_lists_taxonomy_counts_and_rules(tmp_path):
+    s = ttt.summary(ttt.train(*labeled()), tt.load_alert_table(write_table(tmp_path)))
     types = {t["id"]: t for t in s["types"]}
-    assert types["backup_restore"]["sample"] == 12 and types["performance"]["alert_tickets"] == 7
+    assert types["backup_restore"]["sample"] == 12 and types["performance"]["alert_tickets"] == 9
+    assert s["alert_names"] == 4 and ttt.summary(None, None)["alert_names"] == 0
     assert s["rules"] and all(r for r in s["rules"])
     assert len(s["types"]) == len(ttt.TAXONOMY["types"])

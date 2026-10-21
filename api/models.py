@@ -2,7 +2,8 @@
 
 The joblib files are pickles, so they are loaded only from MODEL_DIR (a file name, never a path), and
 when MODEL_SHA256 is set every one must match its hash. With MODEL_STORE set they are first downloaded
-from the store's models/<MODEL_VERSION>/ folder into MODEL_DIR, with the taxonomy notes.
+from the store's models/<MODEL_VERSION>/ folder into MODEL_DIR. The alert-name table ships with the code
+(ticket_analysis/alert_types.json), not with the models.
 """
 
 from __future__ import annotations
@@ -30,7 +31,6 @@ class ModelError(RuntimeError):
 class ModelFiles:
     server: Path
     types: Path
-    notes: Path
 
 
 def version_of(created_at) -> str | None:
@@ -71,30 +71,23 @@ def _check_hash(settings: Settings, path: Path) -> None:
         raise ModelError(f"{path.name} does not match its MODEL_SHA256 hash")
 
 
-def fetch_file(settings: Settings, name: str, *, pickle: bool = True) -> Path:
+def fetch_file(settings: Settings, name: str) -> Path:
     """One model file in MODEL_DIR, downloaded first from models/<MODEL_VERSION>/ when MODEL_STORE is set.
-    A pickle must be a plain file name directly in MODEL_DIR and match its MODEL_SHA256 hash when set."""
+    It must be a plain file name directly in MODEL_DIR and match its MODEL_SHA256 hash when set."""
     folder = settings.model_dir
-    path = Path(name)
-    if not pickle and path.is_absolute():
-        if not path.is_file():
-            raise ModelError(f"{path.name} not found in {path.parent}")
-        return path
     if settings.model_store:
         store = open_store(settings.model_store)
         store.download(f"models/{settings.model_version}/{name}", folder / name)
     path = _inside(folder / name, folder)
     if not path.is_file():
         raise ModelError(f"{path.name} not found in {folder}")
-    if pickle:
-        _check_hash(settings, path)
+    _check_hash(settings, path)
     return path
 
 
 def fetch_model_files(settings: Settings) -> ModelFiles:
-    """The local paths of the model files and the taxonomy notes."""
-    files = ModelFiles(fetch_file(settings, settings.server_model_file), fetch_file(settings, settings.types_model_file),
-                       fetch_file(settings, settings.taxonomy_notes_file, pickle=False))
+    """The local paths of the model files."""
+    files = ModelFiles(fetch_file(settings, settings.server_model_file), fetch_file(settings, settings.types_model_file))
     if settings.model_store:
         log.info("Model version %s downloaded from %s", settings.model_version, settings.model_store)
     return files

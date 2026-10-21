@@ -1,8 +1,7 @@
 """Apply the ticket taxonomy locally, without an LLM.
 
-Alerts take their type from the alert-name table in the taxonomy notes
-(data/claude_pack/returned/taxonomy_notes.md, "Alert name to v1 type"), looked up by the parsed alert
-family and name. Other tickets, and alerts the table does not know, go to the keyword rules in
+Alerts take their type from the alert-name table (alert_types.json), looked up by the parsed alert family
+and name. Other tickets, and alerts the table does not know, go to the keyword rules in
 type_rules.py, which read the text with email boilerplate removed (text_clean.py), and then to TF-IDF and
 logistic regression trained on Claude's labels (tools/ticket_types.py trains and saves the model). A model
 result whose top probability is low or close to the second is flagged uncertain. Used by the detector UI's
@@ -11,20 +10,24 @@ Classify tab. Nothing leaves this machine.
 
 from __future__ import annotations
 
+import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import joblib
 import numpy as np
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .alert_parser import parse_alert
 from .paths import DATA_DIR
-from .taxonomy import TAXONOMY_VERSION  # noqa: F401 -- the version a saved model is checked against
+from .taxonomy import TAXONOMY_VERSION, TicketType
 from .text_clean import clean_text
 from .type_rules import apply_rules
 
 RETURNED_DIR = DATA_DIR / "claude_pack" / "returned"
-NOTES_PATH = RETURNED_DIR / "taxonomy_notes.md"
+ALERT_TYPES_PATH = Path(__file__).parent / "alert_types.json"
 MODEL_PATH = DATA_DIR / "models" / "ticket_types.joblib"
 ALERT_FAMILIES = {"collector", "firing", "backup_exception_report", "volume_capacity", "unparsed"}
 MAX_CHARS = 8000
@@ -55,32 +58,91 @@ INTENT_SOURCES = {
 # --- Alert-name table ------------------------------------------------------------------
 
 
-def load_alert_map(path: Path = NOTES_PATH) -> dict[tuple[str, str], dict]:
-    """(family, alert name in lower case) -> {type, decides, note, tickets} from the notes' alert table.
-    '(blank)' is the empty name. Empty when the file or the section is missing."""
-    if not path.exists():
-        return {}
-    text = path.read_text(encoding="utf-8")
-    section = text.split("## Alert name to v1 type", 1)
-    if len(section) < 2:
-        return {}
-    body = section[1].split("\n## ", 1)[0]
-    out = {}
-    for line in body.splitlines():
-        if not line.startswith("|"):
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 5 or cells[0] not in ALERT_FAMILIES:
-            continue
-        name = "" if cells[1] == "(blank)" else cells[1]
+class _Entry(BaseModel):
+    """What a row gives an alert: its type, how far the name decides it (Yes, Partly or No), the alert
+    tickets it covered when the table was made, and a note for people."""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    family: str
+    type: TicketType
+    decides: Literal["Yes", "Partly", "No"]
+    tickets: int = Field(ge=0)
+    note: str = ""
+
+    @field_validator("family")
+    @classmethod
+    def _known_family(cls, value):
+        if value not in ALERT_FAMILIES:
+            raise ValueError(f"unknown alert family {value!r}")
+        return value
+
+
+class _Name(_Entry):
+    alert_name: str  # "" is an alert with no name
+
+
+class _Pattern(_Entry):
+    pattern: str  # a case-insensitive regular expression searched for in the alert name
+
+    @field_validator("pattern")
+    @classmethod
+    def _compiles(cls, value):
         try:
-            tickets = int(cells[2].replace(",", ""))
-        except ValueError:
-            tickets = 0
-        out[(cells[0], name.lower())] = {"family": cells[0], "alert_name": name, "type": cells[3],
-                                         "decides": cells[4], "note": cells[5] if len(cells) > 5 else "",
-                                         "tickets": tickets}
-    return out
+            re.compile(value)
+        except re.error as e:
+            raise ValueError(f"pattern {value!r} does not compile: {e}") from None
+        return value
+
+
+class _Table(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str = Field(min_length=1)
+    taxonomy_version: str
+    names: list[_Name]
+    patterns: list[_Pattern]
+
+
+@dataclass(frozen=True)
+class AlertTable:
+    """The alert-name table: exact (family, name) rows, then name patterns in file order. Patterns cover
+    rule names that carry a client's name, so no client is named in the file."""
+    version: str
+    names: dict[tuple[str, str], dict] = field(default_factory=dict)
+    patterns: list[tuple[re.Pattern, dict]] = field(default_factory=list)
+
+    def lookup(self, family: str, name: str) -> dict | None:
+        """The row for an alert, or None: an exact name first, else the first pattern that matches."""
+        entry = self.names.get((family, name.lower()))
+        if entry is None:
+            entry = next((e for rx, e in self.patterns if e["family"] == family and rx.search(name)), None)
+        return entry
+
+    def entries(self) -> list[dict]:
+        return list(self.names.values()) + [e for _, e in self.patterns]
+
+    def __len__(self) -> int:
+        return len(self.names) + len(self.patterns)
+
+
+def load_alert_table(path: Path = ALERT_TYPES_PATH) -> AlertTable:
+    """The alert-name table from alert_types.json. Raises ValueError, naming the problem, when the file is
+    for another taxonomy version, a row has an unknown family, type or decides value or extra fields, a
+    pattern does not compile, or two rows share a (family, name)."""
+    try:
+        table = _Table.model_validate(json.loads(path.read_text(encoding="utf-8")))
+    except ValidationError as e:
+        raise ValueError(f"{path.name}: {e}") from None
+    if table.taxonomy_version != TAXONOMY_VERSION:
+        raise ValueError(f"{path.name} is for taxonomy {table.taxonomy_version}, not {TAXONOMY_VERSION}")
+    names = {}
+    for row in table.names:
+        key = (row.family, row.alert_name.lower())
+        if key in names:
+            raise ValueError(f"{path.name}: {row.family} alert name {row.alert_name!r} is listed twice")
+        names[key] = row.model_dump(mode="json")
+    patterns = [(re.compile(p.pattern, re.IGNORECASE), p.model_dump(mode="json")) for p in table.patterns]
+    return AlertTable(table.version, names, patterns)
 
 
 # --- Model -----------------------------------------------------------------------------
@@ -150,7 +212,7 @@ def _rule_or_model(out: dict, subject: str, text: str) -> None:
     out["uncertain"], out["uncertain_reason"] = uncertainty(out["type_candidates"], bool(subject.strip()))
 
 
-def classify(subject: str, text: str, bundle: dict, alert_map: dict) -> dict:
+def classify(subject: str, text: str, bundle: dict, alert_table: AlertTable | None) -> dict:
     """The primary type and intent for one ticket, where each came from, the model's top candidates,
     whether the type is uncertain and why, and, for an alert, its parsed family and name and the table
     entry it matched. Order: the alert-name table, then the keyword rules, then the model."""
@@ -165,7 +227,7 @@ def classify(subject: str, text: str, bundle: dict, alert_map: dict) -> dict:
         _rule_or_model(out, subject, text)
         return out
     family, name = fields.get("family") or "unparsed", fields.get("alert_name") or ""
-    entry = alert_map.get((family, name.lower()))
+    entry = alert_table.lookup(family, name) if alert_table else None
     out["alert"] = {"family": family, "layout": fields.get("layout"), "alert_name": name, "entry": entry}
     resolved = bool(RESOLVED_RE.search(f"{subject}\n{text}"))
     out["intent"], out["intent_source"] = ("provide_information" if resolved else "fix_incident"), "alert_rule"

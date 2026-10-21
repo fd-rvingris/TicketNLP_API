@@ -45,8 +45,6 @@ class Settings(BaseSettings):
                             "MODEL_STORE set, they are downloaded into it first.")
     server_model_file: str = "server_detector.joblib"
     types_model_file: str = "ticket_types.joblib"
-    taxonomy_notes_file: str = Field("taxonomy_notes.md", description="The alert-name table; a file name in "
-                                     "MODEL_DIR (and in the store's version folder) or an absolute path.")
     model_sha256: str = Field("", description="file=sha256 pairs, comma-separated; a model file whose hash "
                               "differs is refused.")
     model_version: str = Field("", description="The store's version folder, models/<MODEL_VERSION>/.")
@@ -109,10 +107,6 @@ class Settings(BaseSettings):
     def loopback(self) -> bool:
         return is_loopback(self.api_host)
 
-    def notes_path(self) -> Path:
-        path = Path(self.taxonomy_notes_file)
-        return path if path.is_absolute() else self.model_dir / path
-
     def check_serving(self) -> None:
         """The checks for serving requests (the refresh job does not need them). Raises ConfigError."""
         if self.auth_mode == "none" and not self.allow_no_auth:
@@ -156,12 +150,11 @@ LOCAL_DIRECTORY = DATA_DIR / "directory"
 
 
 def local_profile(auth: str = "none") -> dict[str, str]:
-    """The settings of a local run: models and taxonomy notes from data/, snapshots in data/directory
+    """The settings of a local run: models from data/, snapshots in data/directory
     (built from data/instances.csv and the model's alert names on first start), no auth on loopback,
     /docs on and readable console logs. Values already in the environment win."""
     profile = {
         "MODEL_DIR": str(DATA_DIR / "models"),
-        "TAXONOMY_NOTES_FILE": str(DATA_DIR / "claude_pack" / "returned" / "taxonomy_notes.md"),
         "DIRECTORY_STORE": str(LOCAL_DIRECTORY),
         "CMDB_SOURCE": "csv",
         "CMDB_CSV_PATH": str(DATA_DIR / "instances.csv"),

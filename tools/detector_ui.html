@@ -201,14 +201,14 @@
             <p>The alert parser checks the text against the known alert layouts: the collector's table, labeled and Markdown layouts, Grafana firing alerts, backup exception reports and volume capacity checks. If one matches, it reads the alert's family and alert name (for example <code>collector</code> and <code>Long-Running Blocking Chain</code>). If none matches, the ticket goes to the keyword rules (steps 4 and 5).</p>
           </div></li>
           <li class="stage l-dict"><div class="node">3</div><div class="layer">
-            <div class="layer-head"><h3>Look up the alert name</h3><span class="chip">74 alert names, 6,000 alert tickets</span></div>
-            <p>The pair (family, alert name) is looked up in the alert-name table from the taxonomy notes. The table says how far the name alone decides the type:</p>
+            <div class="layer-head"><h3>Look up the alert name</h3><span class="chip">57 alert names and patterns, 6,000 alert tickets</span></div>
+            <p>The pair (family, alert name) is looked up in the alert-name table (<code>ticket_analysis/alert_types.json</code>): an exact name first, then name patterns, which cover alert rules whose names carry a client's name. The table says how far the name alone decides the type:</p>
             <div class="table-wrap"><table>
               <thead><tr><th>Name decides</th><th>What happens</th><th class="num">Alert names</th></tr></thead>
               <tbody>
-                <tr><td>Yes</td><td>The table's type is the answer.</td><td class="num">63</td></tr>
+                <tr><td>Yes</td><td>The table's type is the answer.</td><td class="num">51</td></tr>
                 <tr><td>Partly</td><td>The table's type is used, with a note that the body can move it. For example, an SQL Agent job failure is scheduled_jobs, but a failed DatabaseBackup job belongs in backup_restore. The page shows the note; it does not apply it.</td><td class="num">6</td></tr>
-                <tr><td>No</td><td>The table's default is used with a warning, because the name names no condition. The largest is <code>errors</code> (2,142 tickets), defaulted to monitoring_tooling until someone checks what those alerts contain.</td><td class="num">5</td></tr>
+                <tr><td>No</td><td>The table's default is used with a warning, because the name names no condition. The largest is <code>errors</code> (2,142 tickets), defaulted to monitoring_tooling until someone checks what those alerts contain.</td><td class="num">4</td></tr>
                 <tr><td>Not in the table</td><td>The keyword rules and then the model decide (steps 4 to 6). When the model decides, a warning says it learned from human tickets only.</td><td class="num">–</td></tr>
               </tbody>
             </table></div>

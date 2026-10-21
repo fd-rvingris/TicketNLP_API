@@ -450,7 +450,7 @@ definitions, Claude's sample label counts, the alert tickets the alert-name
 table maps to each type, and the rules for choosing the primary type. The
 Classify ticket tab (`#classify`) applies the taxonomy to pasted text locally
 with `ticket_analysis/ticket_types.py`: a parsed alert takes its type from the alert-name
-table in data/claude_pack/returned/taxonomy_notes.md (and intent
+table in ticket_analysis/alert_types.json (and intent
 fix_incident, or provide_information when it says the condition cleared);
 anything else goes to the keyword rules in `ticket_analysis/type_rules.py` (a [Log on to ...]
 task, a Validation Results report, a single-area SIP review, a database refresh
@@ -648,6 +648,11 @@ Quarterly, at 03:00 on the first day of January, April, July and October:
   the Zendesk category and alert name mappings, are in
   data/claude_pack/returned/taxonomy_notes.md. taxonomy_v0.json keeps the
   earlier draft for comparison.
+- ticket_analysis/alert_types.json: the versioned alert-name table, built from
+  the notes' alert table. Exact (family, alert name) rows, then name patterns
+  for alert rules whose names carry a client's name, so the file names no
+  client. It is checked against taxonomy.json when it loads; bump its version
+  with every change.
 - prompts/classify_v*.md: versioned system prompts and user message templates
 - ticket_analysis/taxonomy.py: the type and intent enums and the output schema,
   generated from the taxonomy; tools/schema.py turns it into the form the

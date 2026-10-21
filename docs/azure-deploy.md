@@ -76,8 +76,6 @@ az storage blob upload --auth-mode login --account-name $sa --container-name $co
   --name "models/$modelVersion/server_detector.joblib" --file data/models/server_detector.joblib
 az storage blob upload --auth-mode login --account-name $sa --container-name $container `
   --name "models/$modelVersion/ticket_types.joblib" --file data/models/ticket_types.joblib
-az storage blob upload --auth-mode login --account-name $sa --container-name $container `
-  --name "models/$modelVersion/taxonomy_notes.md" --file data/claude_pack/returned/taxonomy_notes.md
 
 # Hashes for MODEL_SHA256, so the API refuses any other file under these names
 $h1 = (Get-FileHash data/models/server_detector.joblib -Algorithm SHA256).Hash.ToLower()

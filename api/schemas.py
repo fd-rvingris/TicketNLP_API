@@ -73,7 +73,8 @@ REQUEST_EXAMPLES = {
 }
 
 _MODELS_EXAMPLE = {"serverDetector": "2026-10-17T15:10:15Z", "ticketTypes": "2026-10-17T20:53:21Z",
-                   "directory": "2026-10-19T06:00:00Z", "taxonomyVersion": "v1-draft", "modelVersion": None}
+                   "directory": "2026-10-19T06:00:00Z", "taxonomyVersion": "v1-draft", "alertTableVersion": "1",
+                   "modelVersion": None}
 
 
 class TicketRequest(BaseModel):
@@ -108,6 +109,8 @@ class ModelVersions(BaseModel):
                                   "model:<time> when the model's own directory is in use.",
                                   examples=["2026-10-19T06:00:00Z"])
     taxonomyVersion: str = Field(description="The taxonomy the type and intent ids belong to.", examples=["v1-draft"])
+    alertTableVersion: str = Field(description="The alert-name table's version (ticket_analysis/alert_types.json).",
+                                   examples=["1"])
     modelVersion: str | None = Field(description="The store's model version folder (MODEL_VERSION), when set.",
                                      examples=["2026-10-17"])
 
@@ -199,8 +202,8 @@ class Candidate(BaseModel):
 
 
 class AlertTableEntry(BaseModel):
-    """The alert-name table row (taxonomy notes) the alert matched. The table's free-text note is not
-    returned: it was written from real tickets."""
+    """The alert-name table row (alert_types.json) the alert matched, by exact name or name pattern. The
+    table's free-text note is not returned: it was written from real tickets."""
     type: str = Field(description="The type the table gives.", examples=["scheduled_jobs"])
     decides: str = Field(description="Whether the name decides the type: Yes, Partly or No.", examples=["Partly"])
     tickets: int = Field(description="Alert tickets with this name when the table was made.", examples=[1259])
@@ -288,6 +291,7 @@ class TaxonomyEntry(BaseModel):
 class CatalogResponse(Envelope):
     """The response of GET /v1/catalog: every key and enumerated value the responses can contain."""
     taxonomyVersion: str = Field(description="The taxonomy the types and intents belong to.", examples=["v1-draft"])
+    alertTableVersion: str = Field(description="The alert-name table's version.", examples=["1"])
     detectionKeys: list[DetectionKey] = Field(description="The detection keys.")
     detectionFields: list[DetectionField] = Field(description="Every field of a detection.")
     types: list[TaxonomyEntry] = Field(description="The taxonomy's types.")

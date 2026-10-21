@@ -555,8 +555,8 @@ components:
       - tickets
       title: AlertTableEntry
       description: |-
-        The alert-name table row (taxonomy notes) the alert matched. The table's free-text note is not
-        returned: it was written from real tickets.
+        The alert-name table row (alert_types.json) the alert matched, by exact name or name pattern. The
+        table's free-text note is not returned: it was written from real tickets.
     AnalyzeResponse:
       properties:
         requestId:
@@ -648,6 +648,12 @@ components:
           description: The taxonomy the types and intents belong to.
           examples:
           - v1-draft
+        alertTableVersion:
+          type: string
+          title: Alerttableversion
+          description: The alert-name table's version.
+          examples:
+          - '1'
         detectionKeys:
           items:
             $ref: '#/components/schemas/DetectionKey'
@@ -690,6 +696,7 @@ components:
       - apiVersion
       - models
       - taxonomyVersion
+      - alertTableVersion
       - detectionKeys
       - detectionFields
       - types
@@ -902,6 +909,7 @@ components:
           p: 0.2
         intentSource: model
         models:
+          alertTableVersion: '1'
           directory: '2026-10-19T06:00:00Z'
           serverDetector: '2026-10-17T15:10:15Z'
           taxonomyVersion: v1-draft
@@ -1070,6 +1078,7 @@ components:
           - reports
         isAlert: false
         models:
+          alertTableVersion: '1'
           directory: '2026-10-19T06:00:00Z'
           serverDetector: '2026-10-17T15:10:15Z'
           taxonomyVersion: v1-draft
@@ -1382,6 +1391,12 @@ components:
           description: The taxonomy the type and intent ids belong to.
           examples:
           - v1-draft
+        alertTableVersion:
+          type: string
+          title: Alerttableversion
+          description: The alert-name table's version (ticket_analysis/alert_types.json).
+          examples:
+          - '1'
         modelVersion:
           anyOf:
           - type: string
@@ -1396,13 +1411,15 @@ components:
       - ticketTypes
       - directory
       - taxonomyVersion
+      - alertTableVersion
       - modelVersion
       title: ModelVersions
       description: |-
         The model and directory versions that produced the response. They change with retraining and
         directory refreshes, without an API change.
       examples:
-      - directory: '2026-10-19T06:00:00Z'
+      - alertTableVersion: '1'
+        directory: '2026-10-19T06:00:00Z'
         serverDetector: '2026-10-17T15:10:15Z'
         taxonomyVersion: v1-draft
         ticketTypes: '2026-10-17T20:53:21Z'
