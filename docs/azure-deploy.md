@@ -245,14 +245,14 @@ response; `/v1` does not change.
 
 ## 9. Where scheduled retraining would plug in
 
-Automatic retraining is out of scope. It would be a second scheduled Container Apps job (quarterly)
-from an image that includes `tools/`: it would export the latest tickets and labels from DW2.0 into its
-own storage, run `python -m tools.server_detector train` and `python -m tools.ticket_types train`,
-evaluate both against a fixed holdout (`python -m tools.server_detector evaluate`,
-`python -m tools.server_labels evaluate`, `python -m tools.baseline --labels`), and upload the files to a
-new `models/<date>/` folder only when the metrics are not worse than the serving version's. Promotion
-would stay a reviewed change of `MODEL_VERSION` (step 8). That job needs the training data, so it
-needs its own identity and data access review.
+`python -m tools.retrain` does the training, scoring and gating (README, Scheduled retraining). In
+Azure it would run as a second scheduled Container Apps job (cron `0 3 1 1,4,7,10 *`) from an image
+that includes `tools/`, after a step that exports the latest tickets and labels from DW2.0 into its
+own storage, with `--store https://$sa.blob.core.windows.net/$container --serving-dir <a copy of
+models/<MODEL_VERSION>/>`. It uploads a new `models/<date>/` folder only when the metrics are not
+worse than the serving version's, and prints the MODEL_VERSION and MODEL_SHA256 values. Promotion
+stays a reviewed change of `MODEL_VERSION` (step 8). The job needs the training data, so it needs
+its own identity and data access review; the export step is not built.
 
 ## 10. If the auth decision goes another way
 
