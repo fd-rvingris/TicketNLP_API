@@ -43,7 +43,7 @@
     },
     {
       "id": "replication_ha_dr",
-      "label": "Replication, HA, or DR",
+      "label": "Replication, HA, DR, or AG",
       "definition": "Availability groups (health, latency, recovery time, failover, adding or removing databases, node job, login, or linked server mismatch), failover clusters and witnesses, mirroring, log shipping, Oracle Data Guard and Dbvisit standby log gaps, MySQL and PostgreSQL replicas, SQL Server and cloud replication agents and latency, change data capture, planned failovers, DR exercises, and DR/HA reviews. Not: a whole instance down (outage_availability); a Validation Results report after a failover test (outage_availability, with this type as secondary); a copy made for non-production use (database_refresh)."
     },
     {
