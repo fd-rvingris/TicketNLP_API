@@ -466,6 +466,21 @@ data/models/ticket_types.joblib; `python -m tools.ticket_types train` refits it.
 console logs request paths only. Options: --port, --model-path, --train (read
 for client names) and --open.
 
+The New taxonomy tab (`#new-taxonomy`) shows how the current taxonomy would map
+to the service catalog in `ticket_analysis/service_catalog.json`: 36 categories,
+each with its Essential, Select and Signature offering (CH, CS, CE or N/A) and
+its coverage from the tier sheet's row colour. The proposed mapping is
+`tools/new_taxonomy_map.json`: for each current type, ordered slices picked by
+alert or human ticket, the classifier's type source, or subject and text
+keywords, each naming a category (mapped or a judgment call) or none (no home).
+On start the page server classifies every ticket in the export files in the
+background (about a minute for 12,000) and counts them per slice and category.
+The tab lists the tickets with no home, the full mapping with the Zendesk
+categories the tickets carry today, the sheet rows whose colour disagrees with
+their tier codes, the categories that differ by depth or intent, and the
+catalog itself. The mapping is a proposal for review; classification and the
+API do not use it yet.
+
 ### Hand labeling by several DBAs
 
     python -m tools.detector_ui --host 0.0.0.0  # serve the network; DBAs open http://<this machine>:8765/#label
@@ -648,6 +663,10 @@ Quarterly, at 03:00 on the first day of January, April, July and October:
   the Zendesk category and alert name mappings, are in
   data/claude_pack/returned/taxonomy_notes.md. taxonomy_v0.json keeps the
   earlier draft for comparison.
+- ticket_analysis/service_catalog.json: the draft service catalog from the tier
+  category sheet (categories, tier offerings and coverage), validated by
+  ticket_analysis/service_catalog.py. Five rows still await clarification (see the
+  New taxonomy tab).
 - ticket_analysis/alert_types.json: the versioned alert-name table, built from
   the notes' alert table. Exact (family, alert name) rows, then name patterns
   for alert rules whose names carry a client's name, so the file names no
