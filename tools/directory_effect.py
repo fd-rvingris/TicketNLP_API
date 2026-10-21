@@ -30,6 +30,7 @@ from api.directory import CsvCmdbSource, NoCmdbSource, build_snapshot, snapshot_
 from ticket_analysis.jsonl import read_jsonl
 from ticket_analysis.paths import DATA_DIR, INSTANCES_PATH
 from tools.common import REPORTS_DIR, fmt_pct, md_table
+from tools.directory_build import build_directory
 from tools.server_detector import HOLDOUT_LABELS_PATH, prf, score_tickets
 
 LABEL_SETS = [("test file", sl.DATA_DIR / "labels" / "claude_spans.jsonl", DATA_DIR / "test_tickets.jsonl"),
@@ -105,7 +106,7 @@ def main(argv=None) -> None:
             hand += [[label] + row for row in hand_label_rows(name, r)]
 
     test = read_jsonl(args.test)
-    oracle = sd.LocalServerDirectory.from_sources(read_jsonl(args.train) + test, INSTANCES_PATH)
+    oracle = build_directory(read_jsonl(args.train) + test, INSTANCES_PATH)
     derived = []
     for label, directory in (("saved", saved), ("snapshot", hydrated)):
         recs, _ = score_tickets(model, test, directory, oracle)

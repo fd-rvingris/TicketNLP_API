@@ -9,6 +9,7 @@ import ticket_analysis.server_detector as sd
 import tools.detector_ui as ui
 from ticket_analysis.tickets import make_ticket
 from tools.common import ZendeskClient
+from tools.directory_build import build_directory
 
 
 class FixedModel(sd.ServerModel):
@@ -30,7 +31,7 @@ TRAIN = [make_ticket(1, "x", "y", organization_id="100", organization_name="Acme
 
 def app(zendesk=None, subdomain=None):
     bundle = {"model": FixedModel({"sqla01", "sqla02", "newhost07"}, {"reports"}),
-              "directory": sd.LocalServerDirectory.from_sources(TRAIN, None), "trained_on": "t.jsonl",
+              "directory": build_directory(TRAIN, None), "trained_on": "t.jsonl",
               "created_at": "2026-10-16"}
     return ui.App(bundle, ui.client_names(TRAIN), zendesk, subdomain, 8765)
 

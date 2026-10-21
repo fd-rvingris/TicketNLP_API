@@ -67,7 +67,7 @@ tools/server_detector.py, tools/server_labels.py, tools/detector_ui.py with thei
   20% validation split; `best_f1_threshold()` ignores rule matches.
 - Evaluation: `evaluate()` runs the standard test, an unseen-host test and an
   unseen-instance test (grouped holdouts via `holdout_names()` and
-  `LocalServerDirectory.without()`), pairing accuracy, a rules table, and writes
+  `tools.directory_build.without_names()`), pairing accuracy, a rules table, and writes
   data/reports/server-detector-<timestamp>.md.
 - Hand labels: tools/server_labels.py and the Label tab in tools/detector_ui.py. DBAs may
   have saved labels in data/labels/server_spans.jsonl; `python -m tools.server_labels

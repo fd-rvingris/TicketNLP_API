@@ -31,7 +31,7 @@ from sklearn.preprocessing import MaxAbsScaler
 
 from .alert_parser import COLLECTOR_LABELS, FIRING_LABELS, SERVER_FIELDS
 from .names import ParsedName, parse_server_name
-from .paths import DATA_DIR, INSTANCES_PATH
+from .paths import DATA_DIR
 
 MODEL_PATH = DATA_DIR / "models" / "server_detector.joblib"
 DEFAULT_MAX_CHARS = 20_000  # description characters read per ticket
@@ -263,7 +263,8 @@ def ticket_client_keys(ticket: dict) -> tuple[str | None, str | None]:
 
 
 class LocalServerDirectory:
-    """Known names from local sources: server-shaped alert fields, dw_servers and data/instances.csv.
+    """Known names per client: server-shaped alert fields, dw_servers and CMDB records. Training builds
+    one from the local files (tools.directory_build); the API restores one from a snapshot (from_dict).
     Each client is keyed by its Zendesk organization id, or by its name when it has none; a name seen
     with an id is an alias for that id. Names from alert fields and the CMDB export are also kept as
     confirmed (CONFIRMED_SOURCES), with the environment those sources give."""
@@ -294,14 +295,6 @@ class LocalServerDirectory:
             if environment:
                 self._env[(key, parsed.host)][environment] += 1
 
-    def add_ticket(self, ticket: dict) -> None:
-        org, name_key = ticket_client_keys(ticket)
-        for parsed in ticket_names({"dw_servers": ticket.get("dw_servers")}):
-            self.add(org, name_key, parsed, "dw")
-        env = alert_environment(ticket)
-        for parsed in ticket_names({"alert_fields": ticket.get("alert_fields")}):
-            self.add(org, name_key, parsed, "alert", env)
-
     def add_cmdb_record(self, org, client_name, server_name, environment=None) -> tuple[str, ParsedName] | None:
         """One CMDB server record (a row of data/instances.csv). Returns the client key and the parsed
         name, or None when the name is not server-shaped (counted in skipped) or no client is given."""
@@ -314,13 +307,6 @@ class LocalServerDirectory:
         name_key = f"name:{name}" if name else None
         self.add(org, name_key, parsed, "cmdb", (environment or "").strip() or None)
         return (org or name_key, parsed) if org or name_key else None
-
-    def add_instances_csv(self, path: Path) -> None:
-        import csv
-        with path.open(encoding="utf-8-sig", newline="") as f:
-            for row in csv.DictReader(f):
-                self.add_cmdb_record(row.get("zendesk_organization_id"), row.get("client_name"),
-                                     row.get("server_name"), row.get("environment"))
 
     def to_dict(self) -> dict:
         """Every name as stored, per client key, for a directory snapshot: hosts with whether a confirmed
@@ -355,32 +341,6 @@ class LocalServerDirectory:
                     d._confirmed_pairs[key].add(pair)
                     d._confirmed_hosts[key].add(r["host"])
         d._alias = dict(data.get("aliases") or {})
-        return d
-
-    @classmethod
-    def from_sources(cls, tickets: list[dict], instances_path: Path | None = INSTANCES_PATH) -> "LocalServerDirectory":
-        d = cls()
-        for t in tickets:
-            d.add_ticket(t)
-        if instances_path and Path(instances_path).exists():
-            d.add_instances_csv(Path(instances_path))
-        return d
-
-    def without(self, hosts=frozenset(), instances=frozenset()) -> "LocalServerDirectory":
-        """A copy with the given hosts (and their pairs) and instance names removed."""
-        d = LocalServerDirectory()
-        d._alias = dict(self._alias)
-        for src, dst in ((self._hosts, d._hosts), (self._confirmed_hosts, d._confirmed_hosts)):
-            for key, hs in src.items():
-                kept = {h for h in hs if h not in hosts}
-                if kept:
-                    dst[key] = kept
-        for src, dst in ((self._pairs, d._pairs), (self._confirmed_pairs, d._confirmed_pairs)):
-            for key, ps in src.items():
-                kept = {(h, i) for h, i in ps if h not in hosts and i not in instances}
-                if kept:
-                    dst[key] = kept
-        d._env.update({k: Counter(v) for k, v in self._env.items() if k[1] not in hosts})
         return d
 
     def _keys(self, client_key: str | None) -> list[str]:

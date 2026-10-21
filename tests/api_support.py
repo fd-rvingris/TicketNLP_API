@@ -16,6 +16,7 @@ from api.settings import load_settings
 from tests.test_ticket_types import NOTES, labeled
 from ticket_analysis.names import ParsedName
 from ticket_analysis.tickets import make_ticket
+from tools.directory_build import build_directory
 
 ORG, OTHER = "999001", "999002"
 DETECTOR_CREATED = "2026-10-17T15:10:15+00:00"
@@ -45,7 +46,7 @@ def training_tickets(n: int = 160, seed: int = 3) -> list[dict]:
 
 def training_directory() -> sd.LocalServerDirectory:
     """The training tickets' names (dw_servers) plus two alert-confirmed hosts with an environment."""
-    d = sd.LocalServerDirectory.from_sources(training_tickets(), None)
+    d = build_directory(training_tickets(), None)
     d.add(ORG, "name:fake co", ParsedName("fakesql01", None, None), "alert", "Production")
     d.add(ORG, "name:fake co", ParsedName("fakesql02", "reports", None), "alert", "Test")
     return d
