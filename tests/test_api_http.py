@@ -346,8 +346,6 @@ def test_a_request_without_credentials_is_refused_before_its_body_is_read(tmp_pa
         big = b'{"text": "' + b"x" * 1_000_001 + b'"}'
         r = c.post("/v1/detect", content=big, headers={"content-type": "application/json"})
         assert r.status_code == 401 and r.json()["code"] == "missing_api_key" and r.headers["www-authenticate"]
-        r = c.post("/mcp", content=b"{}", headers={"content-type": "application/json"})
-        assert r.status_code == 401
         r = c.post("/v1/detect", content=big, headers={"content-type": "application/json", "X-API-Key": API_KEY})
         assert r.status_code == 413
 

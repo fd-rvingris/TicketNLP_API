@@ -1,7 +1,7 @@
 """Every API setting, read once from environment variables (docs/api.md lists them).
 
 Nothing defaults to a path under data/: local runs get their paths from the local profile
-(local_profile(), used by python -m api --local and the stdio MCP server).
+(local_profile(), used by python -m api --local).
 """
 
 from __future__ import annotations
@@ -83,7 +83,6 @@ class Settings(BaseSettings):
                                          "once; Uvicorn answers 503 beyond it (bounds memory: bodies are up to 1 MB).")
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["json", "text"] = "json"
-    mcp_enabled: bool = True
     debug_responses: bool = False
 
     @cached_property

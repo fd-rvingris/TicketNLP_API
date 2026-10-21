@@ -1,7 +1,7 @@
 # Ticket Analysis API
 
 The API exposes the server detector and the taxonomy classifier of the `ticket_analysis` package over
-HTTP (`/v1`) and MCP. It imports only `ticket_analysis` and `api`, never `tools/`, and its image installs
+HTTP (`/v1`). It imports only `ticket_analysis` and `api`, never `tools/`, and its image installs
 only `requirements-api.txt`. The contract is `docs/openapi.yaml` (OAS 3.1, generated from the code by
 `python -m api.export_openapi`; a test fails when it is stale). Deployment to Azure Container Apps is
 described in `docs/azure-deploy.md`.
@@ -16,7 +16,6 @@ described in `docs/azure-deploy.md`.
 | `GET /v1/catalog` | Every detection key and field with its enumerated values, the types and intents, the type and intent sources |
 | `GET /health` | Liveness; no auth, no detail |
 | `GET /ready` | 200 when both models and the directory are loaded, else 503; no auth, no model detail |
-| `POST /mcp` | The MCP endpoint (streamable HTTP, stateless JSON responses), behind the same auth as `/v1` |
 
 The three POST endpoints take one ticket:
 
@@ -72,23 +71,10 @@ Inference is CPU-bound and runs in a pool of `WORKERS` threads, so the event loo
 Uvicorn process per container is intended: the models take about 100 MB per process, and Container Apps
 scales with replicas.
 
-## MCP tools
-
-| Tool | Same as |
-| --- | --- |
-| `detect_servers` | `POST /v1/detect` |
-| `classify_ticket` | `POST /v1/classify` |
-| `analyze_ticket` | `POST /v1/analyze` |
-| `get_catalog` | `GET /v1/catalog` |
-
-The tools take the same inputs and return the same JSON as the endpoints (structured content), and call
-the service layer directly. They are served at `/mcp` in the API's container (stateless, so any replica
-answers) and over stdio with `python -m api.mcp_server` for local use.
-
 ## Settings
 
 All settings are environment variables, read once at startup (`api/settings.py`). Nothing defaults to a
-path under `data/` except in the local profile (`python -m api --local`, `python -m api.mcp_server`).
+path under `data/` except in the local profile (`python -m api --local`).
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -121,7 +107,6 @@ path under `data/` except in the local profile (`python -m api --local`, `python
 | `MAX_CONCURRENT_REQUESTS` | 64 | Connections and requests one process serves at once; Uvicorn answers 503 beyond it |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
 | `LOG_FORMAT` | `json` | `json` (Azure) or `text` |
-| `MCP_ENABLED` | true | Serve `/mcp` |
 | `DEBUG_RESPONSES` | false | Add scored candidates, cleaned text and rule checks to responses; refused unless `AUTH_MODE=none` on loopback |
 
 A setting that is missing or unsafe stops the service at startup with a message that never repeats the
@@ -129,7 +114,7 @@ values given.
 
 ## Auth
 
-`api/auth.py` holds one dependency applied to every `/v1` route and the same check in front of `/mcp`;
+`api/auth.py` holds one dependency applied to every `/v1` route;
 `AUTH_MODE` chooses the mode, so switching is configuration.
 
 - `none`: local only (needs `ALLOW_NO_AUTH=true` and a loopback `API_HOST`); logged as a warning.
@@ -142,7 +127,7 @@ values given.
   the tenant's published keys (cached for an hour), issuer (v1 or v2 endpoint of `ENTRA_TENANT_ID`),
   audience, expiry (60 seconds leeway) and the app role `ENTRA_REQUIRED_ROLE` (403 without it).
 
-A POST to `/v1` or `/mcp` that carries no credential at all is refused before its body is read, so
+A POST to `/v1` that carries no credential at all is refused before its body is read, so
 anonymous callers cannot make a replica buffer 1 MB bodies; `MAX_CONCURRENT_REQUESTS` caps the rest.
 The OpenAPI document declares both schemes, `ApiKeyAuth` and `EntraBearer`, whatever the mode.
 
@@ -245,18 +230,6 @@ in Azure.
 taxonomy notes and data/directory mounted read-only and `AUTH_MODE=api_key` with `API_KEYS` from `.env`.
 Run `python -m api --local` once first so data/directory has a snapshot. Send the same requests to
 http://127.0.0.1:8000 with the `X-API-Key` header.
-
-**MCP.** Over stdio, `python -m api.mcp_server` loads the local models. For Claude Code:
-
-    claude mcp add ticket-analysis -e PYTHONPATH=C:\src\ticket-classifier-poc -- C:\src\ticket-classifier-poc\.venv\Scripts\python.exe -m api.mcp_server
-
-(`PYTHONPATH` makes `api` importable whatever folder the client starts it in; the data paths are
-absolute). Over HTTP, with `python -m api --local` running:
-
-    claude mcp add --transport http ticket-analysis-http http://127.0.0.1:8000/mcp
-
-and with `--auth api_key`, add `--header "X-API-Key: <key>"`. The MCP Inspector connects the same way:
-`npx @modelcontextprotocol/inspector`, then either the stdio command above or the streamable HTTP URL.
 
 **The detector UI stays the visual demo** (`python -m tools.detector_ui`). It shares the detection code
 with the API (`ticket_analysis/analysis.py`) but still loads the model directly; a `--api URL` option is

@@ -1,4 +1,4 @@
-"""One auth layer for /v1 and /mcp, chosen by AUTH_MODE; switching is configuration, not code.
+"""One auth layer for /v1, chosen by AUTH_MODE; switching is configuration, not code.
 
 - none: no check. Allowed only with ALLOW_NO_AUTH=true on a loopback address (settings.py refuses
   anything else) and logged as a warning at startup.
@@ -93,9 +93,6 @@ class Authenticator:
         if self.mode == "api_key":
             return self._check_key(api_key)
         return self._check_token(bearer_token)
-
-    def check_headers(self, headers: Mapping[str, str]) -> Principal:
-        return self.check(headers.get("x-api-key"), _bearer(headers.get("authorization")))
 
     def missing_credentials(self, headers: Mapping[str, str]) -> AuthError | None:
         """The error check() would raise when the request carries no credential at all, so the

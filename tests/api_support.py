@@ -77,7 +77,7 @@ def make_settings(tmp_path: Path, **values):
     """Local settings over made-up model files in tmp_path/models; values override them."""
     base = {"model_dir": tmp_path / "models", "directory_store": str(tmp_path / "directory"), "auth_mode": "none",
             "allow_no_auth": True, "api_host": "127.0.0.1", "log_format": "text", "workers": 2,
-            "cmdb_source": "none", "mcp_enabled": True}
+            "cmdb_source": "none"}
     base.update(values)
     return load_settings(**base)
 

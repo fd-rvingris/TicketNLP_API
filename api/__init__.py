@@ -1,4 +1,4 @@
-"""The ticket analysis API: the server detector and the taxonomy classifier over HTTP (/v1) and MCP.
+"""The ticket analysis API: the server detector and the taxonomy classifier over HTTP (/v1).
 
 Imports only the ticket_analysis package, never tools/, and needs only requirements-api.txt. See
 docs/api.md for the settings and local runs, and docs/azure-deploy.md for Azure Container Apps.

@@ -4,8 +4,7 @@ info:
   description: |
     Finds the SQL Server hosts and instances a Fortified Data support ticket names, resolved against the
     client's known names, and classifies the ticket's taxonomy type and intent. One ticket per request.
-    Callers: Keystone, AI assistants through the MCP endpoint at /mcp (same operations, same auth), and
-    other applications.
+    Callers: Keystone and other applications.
 
     **Versioning.** The URL version (/v1) changes only for breaking changes. Within v1, changes are
     additive: new optional request fields, new response fields and new enum values (new types, intents,

@@ -1,10 +1,9 @@
-# The API image installs only this file: the ticket_analysis package plus the web server, the MCP server,
+# The API image installs only this file: the ticket_analysis package plus the web server,
 # Entra token validation and Azure Blob access with a managed identity.
 -r requirements.txt
 fastapi==0.148.0
 uvicorn==0.54.0
 pydantic-settings==2.16.0
-mcp==2.3.0
 pyjwt[crypto]==2.15.1
 azure-identity==1.26.0
 azure-storage-blob==12.31.0

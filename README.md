@@ -12,7 +12,7 @@ LLM, and an LLM classifier path measures what a single Claude call can do.
 | Folder | Holds |
 | --- | --- |
 | ticket_analysis/ | What the API ships: alert parsing, secret masking, text cleaning, server detection, type classification and the taxonomy. It never imports from tools/, and requirements.txt is all it needs. |
-| api/ | The ticket analysis API (FastAPI and MCP) over the package: the service layer, auth, directory snapshots and the refresh job. It imports only ticket_analysis; its image installs only requirements-api.txt. See docs/api.md. |
+| api/ | The ticket analysis API (FastAPI) over the package: the service layer, auth, directory snapshots and the refresh job. It imports only ticket_analysis; its image installs only requirements-api.txt. See docs/api.md. |
 | tools/ | Data loading, the LLM run workflow, training, evaluation, labeling and the review pages. Run each as `python -m tools.<name>` from the repository root. |
 | prompts/ | LLM prompts: the classifier's versions and the Claude labeling and taxonomy prompts. |
 | docs/ | The API reference, deployment and design notes, and export queries. |
@@ -61,7 +61,6 @@ requirements-tools.txt adds the tools and tests on top.
 
     python -m api --local                  # http://127.0.0.1:8000/docs, local models, no auth
     python -m api --local --auth api_key   # with API_KEYS from .env
-    python -m api.mcp_server               # the MCP tools over stdio
     python -m api.refresh_directory --local   # a known-names snapshot from data/instances.csv
     python -m api.export_openapi           # regenerate docs/openapi.yaml
     python -m tools.directory_effect       # detection with a snapshot against the model's directory
@@ -70,11 +69,10 @@ requirements-tools.txt adds the tools and tests on top.
 `POST /v1/detect`, `/v1/classify` and `/v1/analyze` take one ticket's text
 (optional subject and Zendesk organization id) and return the detected
 servers and instances, the taxonomy type and intent, or both; `GET
-/v1/catalog` lists every key and value they can contain. The same operations
-are MCP tools at `/mcp`. The contract is docs/openapi.yaml; settings, local
-runs and the directory snapshots are in docs/api.md, the Azure Container Apps
-deployment in docs/azure-deploy.md, and example requests in
-docs/api-examples.http and docs/api-examples.ps1.
+/v1/catalog` lists every key and value they can contain. The contract is
+docs/openapi.yaml; settings, local runs and the directory snapshots are in
+docs/api.md, the Azure Container Apps deployment in docs/azure-deploy.md, and
+example requests in docs/api-examples.http and docs/api-examples.ps1.
 
 ## Inputs
 
