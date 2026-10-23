@@ -179,25 +179,6 @@ def test_taxonomy_and_classify_routes():
         assert needle in html
 
 
-def test_new_taxonomy_route_counts_then_answers():
-    import tools.ticket_types as ttt
-    from tests.test_ticket_types import labeled
-    a = app()
-    assert a.new_taxonomy({}) == {"status": "counting"}
-    a.count_new_taxonomy([make_ticket(1, "Disk", "disk space low on the data drive")])
-    with pytest.raises(ValueError, match="type model"):  # no type model loaded
-        a.new_taxonomy({})
-    a = app()
-    a.types = ttt.train(*labeled())
-    a.count_new_taxonomy([make_ticket(1, "Disk", "disk space low on the data drive")])
-    r = a.new_taxonomy({})
-    assert r["status"] == "ready" and r["tickets"] == 1
-    assert {c["id"]: c["tickets"] for c in r["categories"]}["capacity_reporting"] == 1
-    html = ui.PAGE_PATH.read_text(encoding="utf-8")
-    for needle in ('id="tab-ntax"', 'id="panel-ntax"', "renderNewTaxonomy", "/api/new-taxonomy", "#new-taxonomy"):
-        assert needle in html
-
-
 def test_alert_catalog_has_one_example_per_type():
     from tests.test_alert_layouts import LABELED, MARKDOWN
     tickets = [make_ticket(i, f"Alert #{i} - FD - SQL Agent Job Failure", LABELED + "x" * i, organization_id=str(i % 2),

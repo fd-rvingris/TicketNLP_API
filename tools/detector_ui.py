@@ -17,7 +17,6 @@ import ipaddress
 import json
 import re
 import socket
-import threading
 import webbrowser
 from collections import defaultdict
 from http import HTTPStatus
@@ -27,9 +26,7 @@ from pathlib import Path
 import requests
 
 import ticket_analysis.server_detector as sd
-import ticket_analysis.service_catalog as service_catalog
 import ticket_analysis.ticket_types as tt
-import tools.new_taxonomy as nt
 import tools.server_labels as sl
 import tools.ticket_types as ttt
 from ticket_analysis.alert_parser import parse_alert
@@ -203,7 +200,6 @@ class App:
         self.catalog = {c["key"]: c for c in catalog or []}
         self.label_check, self.label_check_source = label_check or {}, label_check_source
         self.allowed_hosts = allowed_hosts or {f"127.0.0.1:{port}", f"localhost:{port}"}
-        self.new_tax, self.new_tax_error = None, ""  # set by count_new_taxonomy()
 
     # --- Labeling ----------------------------------------------------------------
 
@@ -365,27 +361,6 @@ class App:
             raise ValueError(f"Text is longer than {MAX_TEXT:,} characters")
         return tt.classify(subject, text, self.types, self.alert_table)
 
-    # --- New taxonomy ------------------------------------------------------------
-
-    def count_new_taxonomy(self, tickets: list[dict]) -> None:
-        """Classify the tickets and map them to the service catalog for the New taxonomy tab. Slow (about
-        45 seconds for 12,000 tickets), so make_app runs it in a background thread."""
-        try:
-            if not self.types:
-                raise ValueError(f"The New taxonomy tab needs the type model, which needs Claude's sample labels "
-                                 f"at {ttt.LABELS_PATH}")
-            catalog = service_catalog.load_catalog()
-            mapping = nt.load_mapping(catalog=catalog)
-            self.new_tax = nt.summary(tickets, lambda s, t: tt.classify(s, t, self.types, self.alert_table),
-                                      catalog, mapping)
-        except ValueError as e:
-            self.new_tax_error = str(e)
-
-    def new_taxonomy(self, body: dict) -> dict:
-        if self.new_tax_error:
-            raise ValueError(self.new_tax_error)
-        return {"status": "ready", **self.new_tax} if self.new_tax else {"status": "counting"}
-
     def analyze_text(self, body: dict) -> dict:
         text, subject = str(body.get("text") or ""), str(body.get("subject") or "")
         if not (text.strip() or subject.strip()):
@@ -475,8 +450,7 @@ def make_handler(app: App):
                       "/api/label/save": app.label_save, "/api/label/mine": app.label_mine,
                       "/api/alert-types": app.alert_types, "/api/alert-types/example": app.alert_example,
                       "/api/alert-labels": app.alert_labels, "/api/alert-labels/open": app.alert_label_open,
-                      "/api/taxonomy": app.taxonomy, "/api/classify": app.classify_text,
-                      "/api/new-taxonomy": app.new_taxonomy}
+                      "/api/taxonomy": app.taxonomy, "/api/classify": app.classify_text}
             route = routes.get(self.path.split("?")[0])
             if not route:
                 return self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
@@ -556,11 +530,8 @@ def make_app(model_path: Path, train_path: Path, port: int, *, zendesk_mode: str
         label_check = labeled_alerts(sl.load_labels(check_labels), read_jsonl(check_tickets))
         source = f"{check_labels.name} on {check_tickets.name}"
         print(f"Alert labels: {len(label_check)} labeled alert tickets in {source}")
-    app = App(bundle, names, zendesk, subdomain, port, queue, allowed_hosts, catalog, types, alert_table,
-              label_check, source)
-    print(f"New taxonomy: mapping {len(tickets):,} tickets to the service catalog in the background")
-    threading.Thread(target=app.count_new_taxonomy, args=(tickets,), daemon=True).start()
-    return app
+    return App(bundle, names, zendesk, subdomain, port, queue, allowed_hosts, catalog, types, alert_table,
+               label_check, source)
 
 
 def main():

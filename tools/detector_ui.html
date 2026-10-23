@@ -13,7 +13,6 @@
     --host: #d5e8f7; --host-line: #1f5f8b; --pair: #dcd3f3; --pair-line: #5a3fa0; --inst: #fbe3c6; --inst-line: #9a5a00;
     --af-client: #def1e4; --af-client-line: #1e6b3a; --af-env: #d9f0ee; --af-env-line: #00695f;
     --af-type: #fbf0d9; --af-type-line: #8a5a00; --af-date: #eceff3; --af-date-line: #5d6879;
-    --cov-included: #e2efda; --cov-ce: #dde8f5; --cov-cs: #fff2cc;  /* the tier sheet's row colours */
     --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
     --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
     color-scheme: light;
@@ -26,7 +25,6 @@
       --host: #1d3a52; --host-line: #7db6df; --pair: #34295a; --pair-line: #b9a6f0; --inst: #4a3417; --inst-line: #f0b060;
       --af-client: #1b3324; --af-client-line: #8fd3a5; --af-env: #13302e; --af-env-line: #6fd0c4;
       --af-type: #3a2f17; --af-type-line: #f0c060; --af-date: #262c35; --af-date-line: #9aa4b3;
-      --cov-included: #1f3324; --cov-ce: #1d2c40; --cov-cs: #3a3218;
       color-scheme: dark;
     }
   }
@@ -162,22 +160,6 @@
   .cand .fill { height: 100%; background: var(--accent); }
   .cand .p { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
   .note { background: var(--alert-soft); color: var(--fg); border-radius: 4px; padding: 6px 10px; font-size: 13px; }
-  /* New taxonomy */
-  .cov { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; color: var(--fg); white-space: nowrap; border: 1px solid var(--line); }
-  .cov.included { background: var(--cov-included); }
-  .cov.ce_or_sow { background: var(--cov-ce); }
-  .cov.cs_incident { background: var(--cov-cs); }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
-  .tile { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; display: grid; gap: 2px; }
-  .tile .n { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .tax td.code { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
-  .tax td.code.na { color: var(--muted); }
-  .tax tr.type-head td { background: var(--bg); font-weight: 600; }
-  .tax .disc { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 8px; }
-  .tax .disc h3 { margin: 0; font-size: 15px; }
-  .tax .disc p { margin: 0; max-width: 100ch; }
-  .tax .disc ul { margin: 0; padding-left: 20px; }
-  .tax ul.ex { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -195,7 +177,6 @@
       <button type="button" role="tab" id="tab-alabels" aria-selected="false" aria-controls="panel-alabels" hidden>Alert labels</button>
       <button type="button" role="tab" id="tab-how" aria-selected="false" aria-controls="panel-how">How it works</button>
       <button type="button" role="tab" id="tab-tax" aria-selected="false" aria-controls="panel-tax">Taxonomy</button>
-      <button type="button" role="tab" id="tab-ntax" aria-selected="false" aria-controls="panel-ntax">New taxonomy</button>
       <button type="button" role="tab" id="tab-cls" aria-selected="false" aria-controls="panel-cls">Classify ticket</button>
       <button type="button" role="tab" id="tab-flow" aria-selected="false" aria-controls="panel-flow">How types are chosen</button>
       <button type="button" role="tab" id="tab-lflow" aria-selected="false" aria-controls="panel-lflow">How labeling works</button>
@@ -395,9 +376,6 @@
     </div>
     <div id="panel-tax" role="tabpanel" aria-labelledby="tab-tax" hidden style="display:none; gap:8px">
       <div class="tax" id="tax-view"><span class="meta">Loading the taxonomy…</span></div>
-    </div>
-    <div id="panel-ntax" role="tabpanel" aria-labelledby="tab-ntax" hidden style="display:none; gap:8px">
-      <div class="tax" id="ntax-view"><span class="meta">Loading the new taxonomy…</span></div>
     </div>
     <div id="panel-cls" role="tabpanel" aria-labelledby="tab-cls" hidden style="display:none; gap:8px">
       <div class="row">
@@ -1257,175 +1235,6 @@
       n ? el("span", { class: "bar" + (cls ? " " + cls : ""), style: `width:${Math.max(2, Math.round(n / max * 60))}px` }) : null);
   }
 
-  // --- New taxonomy --------------------------------------------------------------------
-
-  let NTAX = null, NTAX_FILTER = "";
-  const STATUS_CHIP = { mapped: ["Mapped", "good"], judgment: ["Judgment call", "alert"], no_home: ["No home", "bad"] };
-  const BASIS_TEXT = { source: "classifier source", keywords: "keywords (estimate)", remainder: "rest of the type" };
-  const TIER_IDS = ["essential", "select", "signature"];
-
-  async function loadNewTaxonomy() {
-    if (NTAX) return;
-    let r;
-    try { r = await post("/api/new-taxonomy", {}); }
-    catch (e) { $("ntax-view").replaceChildren(el("div", { class: "error" }, e.message)); return; }
-    if (r.status !== "ready") {
-      $("ntax-view").replaceChildren(el("span", { class: "meta" },
-        "Classifying every ticket and mapping it to the service catalog. This takes about a minute after the page server starts…"));
-      setTimeout(() => { if ($("tab-ntax").getAttribute("aria-selected") === "true") loadNewTaxonomy(); }, 3000);
-      return;
-    }
-    NTAX = r;
-    renderNewTaxonomy();
-  }
-
-  const catOf = id => NTAX.categories.find(c => c.id === id) || { id, name: id };
-  const catName = id => id ? catOf(id).name : "–";
-  const statusChip = s => chip(...STATUS_CHIP[s]);
-  const covChip = c => el("span", { class: "cov " + c }, NTAX.coverage[c] || c);
-  const share = n => NTAX.tickets ? ` (${(n / NTAX.tickets * 100).toFixed(1)}%)` : "";
-  const tierCells = tiers => TIER_IDS.map(t => el("td", { class: "code" + (tiers[t] === "N/A" ? " na" : ""),
-    title: NTAX.offerings[tiers[t]] || "" }, tiers[t]));
-  const tierHeads = () => TIER_IDS.map(t => el("th", {}, NTAX.tiers[t]));
-  const candidatesText = list => (list || []).length ? list.map(catName).join("; ") : "–";
-  const zendeskText = list => (list || []).map(z => `${z.category} ${z.tickets.toLocaleString()}`).join("; ") || "–";
-
-  function examplesCell(row) {
-    return el("td", {}, row.examples.length ? el("ul", { class: "ex" }, row.examples.map(x => el("li", {}, x))) : "–");
-  }
-
-  function ntaxSummary() {
-    const s = NTAX.status_tickets;
-    return el("div", { class: "card" }, el("h2", {}, "Where the current tickets land"),
-      el("p", { class: "meta" }, `Service catalog ${NTAX.catalog_version}, mapping ${NTAX.mapping_version} for taxonomy ${NTAX.taxonomy_version}. `
-        + `All ${NTAX.tickets.toLocaleString()} export tickets (${NTAX.alert_tickets.toLocaleString()} parsed as alerts) were classified with the current `
-        + "local classifier, then placed in their type's first matching slice of tools/new_taxonomy_map.json. Types decided by the model are about "
-        + "75% accurate on human tickets, and slices picked by keywords are estimates. The export holds equal numbers of alert and human tickets, "
-        + "so shares describe this sample, not all of Zendesk."),
-      el("div", { class: "tiles" },
-        ["mapped", "judgment", "no_home"].map(k => el("div", { class: "tile" }, statusChip(k),
-          el("span", { class: "n" }, s[k].toLocaleString()), el("span", { class: "meta" }, share(s[k]).trim())))),
-      el("p", { class: "meta" }, "Mapped: the category fits. Judgment call: a proposal, with the other categories that could fit. "
-        + "No home: no category fits."));
-  }
-
-  function ntaxNoHome() {
-    const rows = NTAX.no_home.filter(r => r.tickets), max = Math.max(1, ...rows.map(r => r.tickets));
-    const cats = NTAX.unmapped_categories.map(catOf);
-    return el("div", { class: "card" }, el("h2", {}, "Current tickets with no home"),
-      el("p", { class: "meta" }, `${NTAX.status_tickets.no_home.toLocaleString()} tickets${share(NTAX.status_tickets.no_home)} fit no category in the catalog. `
-        + "'Zendesk today' is where the team files them now."),
-      el("div", { class: "table-wrap" }, el("table", {},
-        el("thead", {}, el("tr", {}, el("th", {}, "Current type"), el("th", {}, "Slice"), el("th", { class: "num" }, "Tickets"),
-          el("th", {}, "Could fit"), el("th", {}, "Zendesk today"), el("th", {}, "Note"), el("th", {}, "Examples"))),
-        el("tbody", {}, rows.map(r => el("tr", {}, el("td", { class: "id" }, r.type), el("td", {}, r.label), countCell(r.tickets, max),
-          el("td", {}, candidatesText(r.candidates)), el("td", {}, zendeskText(r.zendesk)), el("td", { class: "def" }, r.note || "–"),
-          examplesCell(r)))))),
-      el("h2", {}, "Catalog categories nothing maps to"),
-      el("p", {}, cats.length ? cats.map(c => c.name).join("; ") : "None."),
-      el("p", { class: "meta" }, "No current type covers these, so there are no tickets to count yet."));
-  }
-
-  function ntaxMapping() {
-    const max = Math.max(1, ...NTAX.types.flatMap(t => t.slices.map(s => s.tickets)));
-    const shown = t => t.slices.filter(s => !NTAX_FILTER || s.status === NTAX_FILTER);
-    const filter = el("select", { "aria-label": "Status", onchange: e => { NTAX_FILTER = e.target.value; renderNewTaxonomy(); } },
-      el("option", { value: "" }, "Every status"), ...Object.entries(STATUS_CHIP).map(([k, [label]]) =>
-        el("option", { value: k, selected: k === NTAX_FILTER ? "selected" : null }, label)));
-    return el("div", { class: "card" }, el("h2", {}, "Current type to new category"),
-      el("div", { class: "row" }, el("label", {}, "Show", filter)),
-      el("p", { class: "meta" }, "Each current type, largest first, split into the slices the mapping file defines. 'Picked by' says how the "
-        + "slice's tickets were chosen."),
-      el("div", { class: "table-wrap" }, el("table", {},
-        el("thead", {}, el("tr", {}, el("th", {}, "Slice"), el("th", { class: "num" }, "Tickets"), el("th", { class: "num" }, "Alerts"),
-          el("th", {}, "New category"), el("th", {}, "Status"), el("th", {}, "Picked by"), el("th", {}, "Could also fit"),
-          el("th", {}, "Zendesk today"), el("th", {}, "Note"), el("th", {}, "Examples"))),
-        el("tbody", {}, NTAX.types.filter(t => shown(t).length).flatMap(t => [
-          el("tr", { class: "type-head" }, el("td", {}, el("span", { class: "cls-id" }, t.type), " ", t.label),
-            el("td", { class: "num" }, t.tickets.toLocaleString()), el("td", { class: "num" }, t.alerts.toLocaleString()),
-            el("td", { colspan: "7" })),
-          ...shown(t).map(s => el("tr", {}, el("td", {}, s.label), countCell(s.tickets, max), el("td", { class: "num" }, s.alerts ? s.alerts.toLocaleString() : "–"),
-            el("td", {}, catName(s.category)), el("td", {}, statusChip(s.status)), el("td", { class: "meta" }, BASIS_TEXT[s.basis] || s.basis),
-            el("td", {}, candidatesText(s.candidates)), el("td", {}, zendeskText(s.zendesk)), el("td", { class: "def" }, s.note || "–"),
-            examplesCell(s)))])))));
-  }
-
-  function ntaxConflicts() {
-    return el("div", { class: "card" }, el("h2", {}, "Sheet rows to clarify"),
-      el("p", { class: "meta" }, "In these rows the colour (how the work is covered) disagrees with the tier codes. A row's codes suggest "
-        + "'Included in service' when every offered tier is CH, 'CS incident' when every offered tier is CS, and 'CE hours to be used or SOW "
-        + "required' when any tier is CE."),
-      el("div", { class: "table-wrap" }, el("table", {},
-        el("thead", {}, el("tr", {}, el("th", {}, "Category"), ...tierHeads(), el("th", {}, "Row colour"), el("th", {}, "Codes suggest"),
-          el("th", {}, "Question"))),
-        el("tbody", {}, NTAX.conflicts.map(c => el("tr", {}, el("td", {}, c.name), ...tierCells(c.tiers),
-          el("td", {}, covChip(c.coverage)), el("td", {}, c.implied_coverage ? covChip(c.implied_coverage) : "–"),
-          el("td", { class: "def" }, c.question)))))),
-      NTAX.questions.length ? el("h2", {}, "Questions the sheet asks") : null,
-      NTAX.questions.length ? el("ul", {}, NTAX.questions.map(q => el("li", {}, el("b", {}, q.name), ": ", q.question))) : null);
-  }
-
-  function ntaxDiscussions() {
-    const a = NTAX.alerts, maxA = Math.max(1, ...a.by_category.map(c => c.alert_tickets));
-    return el("div", { class: "card" }, el("h2", {}, "Categories that differ by depth or intent"),
-      el("p", { class: "meta" }, "Groups whose categories share a topic and differ by how deep the work goes, when it happens, or who asked. "
-        + "Ticket text rarely shows that, so these are where classification will be least reliable. Where every category in a group has "
-        + "the same tier codes and row colour, merging them would not change the tier, offering or coverage the API returns."),
-      NTAX.discussions.map(d => el("section", { class: "disc" },
-        el("h3", {}, d.title, " ", d.same_offering ? chip("Same offering in every tier", "good")
-          : d.same_codes ? chip("Same tier codes, row colours differ", "alert") : chip("Offerings differ", "alert")),
-        el("div", { class: "table-wrap" }, el("table", {},
-          el("thead", {}, el("tr", {}, el("th", {}, "Category"), ...tierHeads(), el("th", {}, "Row colour"), el("th", { class: "num" }, "Tickets mapped"))),
-          el("tbody", {}, d.categories.map(c => el("tr", {}, el("td", {}, c.name), ...tierCells(c.tiers), el("td", {}, covChip(c.coverage)),
-            el("td", { class: "num" }, c.tickets ? c.tickets.toLocaleString() : "–")))))),
-        el("p", {}, el("b", {}, "Difference: "), d.difference),
-        el("p", {}, el("b", {}, "Why it is hard: "), d.why_hard),
-        el("p", {}, el("b", {}, "Signals: "), d.signals),
-        el("div", {}, el("b", {}, "Options"), el("ul", {}, d.options.map(o => el("li", {}, o)))))),
-      el("section", { class: "disc" },
-        el("h3", {}, "Alerts: monitoring or the condition's category?"),
-        el("p", {}, `The mapping gives each alert the category of its condition (disk space goes to Capacity Reporting, an instance down to `
-          + `Failures & Outages). ${a.essential_na.toLocaleString()} alert tickets then land in categories that are N/A for Essential, so an `
-          + "Essential client's alert would have no offering. The alternative is to put every alert in Real-time Monitoring & Alerting (CH in "
-          + "every tier) and record the condition separately."),
-        el("div", { class: "table-wrap" }, el("table", {},
-          el("thead", {}, el("tr", {}, el("th", {}, "Category"), ...tierHeads(), el("th", { class: "num" }, "Alert tickets"))),
-          el("tbody", {}, a.by_category.map(c => el("tr", {}, el("td", {}, c.name), ...tierCells(c.tiers), countCell(c.alert_tickets, maxA, "inst"))))))));
-  }
-
-  function ntaxCatalog() {
-    const conflicted = new Set(NTAX.conflicts.map(c => c.id)), max = Math.max(1, ...NTAX.categories.map(c => c.tickets));
-    return el("div", { class: "card" }, el("h2", {}, "The new catalog"),
-      el("p", { class: "meta" }, "The 36 categories from the tier sheet. CH is Core Health, CS Core Support and CE Core Expert. 'Tickets "
-        + "mapped' counts the current tickets the mapping sends to each category, judgment calls included."),
-      el("div", { class: "table-wrap" }, el("table", {},
-        el("thead", {}, el("tr", {}, el("th", {}, "Category"), ...tierHeads(), el("th", {}, "Row colour"), el("th", {}, "Description"),
-          el("th", { class: "num" }, "Tickets mapped"), el("th", { class: "num" }, "Of which alerts"))),
-        el("tbody", {}, NTAX.categories.map(c => el("tr", {}, el("td", {}, c.name,
-            conflicted.has(c.id) ? el("span", { style: "margin-left:6px" }, chip("Clarify", "alert")) : null),
-          ...tierCells(c.tiers), el("td", {}, covChip(c.coverage)), el("td", { class: "def" }, c.description),
-          countCell(c.tickets, max), el("td", { class: "num" }, c.alert_tickets ? c.alert_tickets.toLocaleString() : "–")))))));
-  }
-
-  function ntaxZendesk() {
-    const rows = NTAX.zendesk_check;
-    if (!rows.length) return null;
-    return el("div", { class: "card" }, el("h2", {}, "Zendesk categories that already use catalog names"),
-      el("p", { class: "meta" }, "A few Zendesk categories carry a tier prefix and a catalog name (cut at 30 characters). Where the mapping "
-        + "puts those tickets is a small check on it."),
-      el("div", { class: "table-wrap" }, el("table", {},
-        el("thead", {}, el("tr", {}, el("th", {}, "Zendesk category"), el("th", {}, "Catalog category"), el("th", { class: "num" }, "Tickets"),
-          el("th", { class: "num" }, "Mapped there"), el("th", {}, "Where the mapping puts them"))),
-        el("tbody", {}, rows.map(z => el("tr", {}, el("td", {}, z.zendesk_category), el("td", {}, catName(z.category)),
-          el("td", { class: "num" }, z.tickets.toLocaleString()), el("td", { class: "num" }, z.agree.toLocaleString()),
-          el("td", {}, z.landed.map(l => `${l.category ? catName(l.category) : "no home"} ${l.tickets}`).join("; "))))))));
-  }
-
-  function renderNewTaxonomy() {
-    $("ntax-view").replaceChildren(ntaxSummary(), ntaxNoHome(), ntaxMapping(), ntaxConflicts(), ntaxDiscussions(),
-      ntaxCatalog(), ntaxZendesk());
-  }
-
   function renderTaxonomy() {
     const t = TAX, maxS = Math.max(1, ...t.types.map(x => x.sample)), maxA = Math.max(1, ...t.types.map(x => x.alert_tickets));
     const maxI = Math.max(1, ...t.intents.map(x => x.sample));
@@ -1531,13 +1340,13 @@
   // --- Setup ---------------------------------------------------------------------
 
   function selectTab(which) {
-    for (const name of ["text", "zendesk", "label", "types", "alabels", "how", "tax", "ntax", "cls", "flow", "lflow"]) {
+    for (const name of ["text", "zendesk", "label", "types", "alabels", "how", "tax", "cls", "flow", "lflow"]) {
       const on = name === which;
       $(`tab-${name}`).setAttribute("aria-selected", String(on));
       $(`panel-${name}`).hidden = !on;
       $(`panel-${name}`).style.display = on ? "grid" : "none";
     }
-    const labeling = which === "label", ownView = ["how", "tax", "ntax", "cls", "flow", "lflow"].includes(which);
+    const labeling = which === "label", ownView = ["how", "tax", "cls", "flow", "lflow"].includes(which);
     $("th-row").hidden = labeling || ownView;
     $("results").hidden = labeling || ownView;
     $("label-view").hidden = !labeling || !LABEL.ticket;
@@ -1558,7 +1367,6 @@
     $("tab-alabels").addEventListener("click", () => { selectTab("alabels"); if (!ALABELS) loadAlertLabels(); });
     $("tab-how").addEventListener("click", () => { selectTab("how"); renderHow(); });
     $("tab-tax").addEventListener("click", () => { selectTab("tax"); loadTaxonomy(); });
-    $("tab-ntax").addEventListener("click", () => { selectTab("ntax"); loadNewTaxonomy(); });
     $("tab-cls").addEventListener("click", () => { selectTab("cls"); loadTaxonomy(); });
     $("tab-flow").addEventListener("click", () => { selectTab("flow"); renderFlow(); });
     if (location.hash === "#how-types") { selectTab("flow"); renderFlow(); }
@@ -1567,7 +1375,6 @@
     $("cls-run").addEventListener("click", classifyTicket);
     $("cls-text").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) classifyTicket(); });
     if (location.hash === "#taxonomy") { selectTab("tax"); loadTaxonomy(); }
-    if (location.hash === "#new-taxonomy") { selectTab("ntax"); loadNewTaxonomy(); }
     if (location.hash === "#classify") { selectTab("cls"); loadTaxonomy(); }
     if (location.hash === "#how") { selectTab("how"); renderHow(); }
     $("types-filter").addEventListener("input", renderTypes);
