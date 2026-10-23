@@ -1,4 +1,4 @@
-"""The HTTP API (FastAPI): /v1 endpoints, probes and the OpenAPI document.
+"""The HTTP API (FastAPI): /v1 endpoints, probes, the OpenAPI document and the MCP endpoint.
 
     uvicorn --factory api.app:create_app      or      python -m api [--local]
 
@@ -16,9 +16,12 @@ from typing import Annotated
 
 import anyio
 from fastapi import APIRouter, Body, Depends, FastAPI, Request
+from starlette.datastructures import Headers
+from starlette.routing import Route
 
 from . import API_VERSION, errors, logs
-from .auth import Authenticator, require_auth
+from .auth import AuthError, AuthUnavailable, Authenticator, require_auth
+from .mcp_server import mcp_request_id
 from .middleware import RequestContext
 from .schemas import (REQUEST_EXAMPLES, AnalyzeResponse, CatalogResponse, ClassifyResponse, DetectResponse, Problem,
                       Status, TicketRequest)
@@ -30,7 +33,8 @@ log = logging.getLogger("api.app")
 DESCRIPTION = """\
 Finds the SQL Server hosts and instances a Fortified Data support ticket names, resolved against the
 client's known names, and classifies the ticket's taxonomy type and intent. One ticket per request.
-Callers: Keystone and other applications.
+Callers: Keystone, AI assistants through the MCP endpoint at /mcp (same operations, same auth), and
+other applications.
 
 **Versioning.** The URL version (/v1) changes only for breaking changes. Within v1, changes are
 additive: new optional request fields, new response fields and new enum values (new types, intents,
@@ -153,6 +157,47 @@ READY_LOG_SECONDS = 300
 _ready_log = {"key": None, "at": 0.0}
 
 
+class _McpAuth:
+    """The /v1 auth check in front of the MCP endpoint (a mounted ASGI app, outside FastAPI's dependencies)."""
+
+    def __init__(self, app, authenticator: Authenticator):
+        self.app, self.authenticator = app, authenticator
+
+    async def __call__(self, scope, receive, send):
+        request_id = scope.get("state", {}).get("request_id")
+        try:
+            principal = await anyio.to_thread.run_sync(self.authenticator.check_headers, Headers(scope=scope))
+        except AuthError as e:
+            return await errors.problem(e.status, e.code, e.detail, request_id=request_id, headers=e.headers)(
+                scope, receive, send)
+        except AuthUnavailable:
+            return await errors.problem(503, "auth_unavailable", "Tokens cannot be validated right now.",
+                                        request_id=request_id, headers={"Retry-After": "30"})(scope, receive, send)
+        scope.setdefault("state", {})["caller"] = principal.caller
+        token = mcp_request_id.set(request_id)  # the tools report the request's own id
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            mcp_request_id.reset(token)
+
+
+def _mount_mcp(app: FastAPI, service: Service, settings: Settings, authenticator: Authenticator):
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    from .mcp_server import build_mcp
+    mcp = build_mcp(service)
+    # Loopback runs keep the SDK's DNS-rebinding check (they may run without auth); elsewhere auth guards it.
+    security = TransportSecuritySettings(enable_dns_rebinding_protection=settings.loopback,
+                                         allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"],
+                                         allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"])
+    # Stateless JSON responses: any replica can answer any request, with no session affinity.
+    mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True,
+                                      transport_security=security)
+    endpoint = next(r.endpoint for r in mcp_app.routes if getattr(r, "path", None) == "/mcp")
+    app.router.routes.append(Route("/mcp", endpoint=_McpAuth(endpoint, authenticator)))
+    return mcp
+
+
 def create_app(settings: Settings | None = None, *, service: Service | None = None, load: bool = True,
                background: bool = True, authenticator: Authenticator | None = None,
                configure_logging: bool = True) -> FastAPI:
@@ -164,6 +209,7 @@ def create_app(settings: Settings | None = None, *, service: Service | None = No
         logs.configure(settings.log_level, settings.log_format)
     service = service or Service(settings)
     authenticator = authenticator or Authenticator(settings)
+    state = {}
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -174,7 +220,10 @@ def create_app(settings: Settings | None = None, *, service: Service | None = No
                 await anyio.to_thread.run_sync(service.load)
         refresher = asyncio.create_task(_refresh_loop(service, settings.directory_refresh_minutes * 60))
         try:
-            yield
+            async with contextlib.AsyncExitStack() as stack:
+                if state.get("mcp"):
+                    await stack.enter_async_context(state["mcp"].session_manager.run())
+                yield
         finally:
             refresher.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -188,6 +237,8 @@ def create_app(settings: Settings | None = None, *, service: Service | None = No
     errors.install(app)
     app.include_router(v1)
     app.include_router(probes)
+    if settings.mcp_enabled:
+        state["mcp"] = _mount_mcp(app, service, settings, authenticator)
     app.add_middleware(RequestContext, precheck=authenticator.missing_credentials,
                        loopback_only=settings.auth_mode == "none")
     return app

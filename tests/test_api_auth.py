@@ -131,6 +131,18 @@ def test_entra_mode_over_http(tmp_path, keys):
         assert c.post("/v1/detect", json=TICKET, headers={"X-API-Key": API_KEY}).status_code == 401
 
 
+def test_the_mcp_endpoint_is_behind_the_same_auth(tmp_path):
+    rpc = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+    headers = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+    with app_client(tmp_path, auth_mode="api_key", api_keys=API_KEY) as c:
+        r = c.post("/mcp", json=rpc, headers=headers)
+        assert r.status_code == 401 and r.json()["code"] == "missing_api_key"
+        r = c.post("/mcp", json=rpc, headers={**headers, "X-API-Key": "fake-wrong-key-000000"})
+        assert r.status_code == 401
+        r = c.post("/mcp", json=rpc, headers={**headers, "X-API-Key": API_KEY})
+        assert r.status_code not in (401, 403)
+
+
 def test_openapi_declares_both_security_schemes(tmp_path):
     with app_client(tmp_path, auth_mode="api_key", api_keys=API_KEY) as c:
         doc = c.get("/openapi.json").json()

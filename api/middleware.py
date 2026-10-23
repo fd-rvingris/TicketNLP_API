@@ -88,7 +88,7 @@ class RequestContext:
                 h = MutableHeaders(scope=message)
                 h["X-Request-Id"] = request_id
                 h.setdefault("X-Content-Type-Options", "nosniff")
-                if path.startswith("/v1/"):
+                if path.startswith(("/v1/", "/mcp")):
                     h.setdefault("Cache-Control", "no-store")
             await send(message)
 
@@ -98,7 +98,7 @@ class RequestContext:
                 return await _send_problem(send, 403, "loopback_only",
                                            "Without auth the API answers loopback requests only.", request_id)
             if method in BODY_METHODS:
-                if self.precheck and path.startswith("/v1/"):
+                if self.precheck and path.startswith(("/v1/", "/mcp")):
                     error = self.precheck(headers)
                     if error is not None:
                         result["status"] = error.status
@@ -145,7 +145,7 @@ class RequestContext:
         finally:
             extra = {"method": method, "path": path, "status": result["status"],
                      "latencyMs": round((time.perf_counter() - start) * 1000, 1), "requestId": request_id}
-            for key in ("textLength", "orgIdGiven", "caller"):
+            for key in ("textLength", "orgIdGiven", "caller", "tool"):
                 if key in state:
                     extra[key] = state[key]
             if path not in ("/health", "/ready"):

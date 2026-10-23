@@ -135,7 +135,7 @@ az containerapp update --resource-group $rg --name $app --image "$acr.azurecr.io
     "MODEL_STORE=https://$sa.blob.core.windows.net/$container" "MODEL_VERSION=$modelVersion" `
     "MODEL_SHA256=$modelSha" "MODEL_DIR=/models" `
     "DIRECTORY_STORE=https://$sa.blob.core.windows.net/$container/directory" "DIRECTORY_REFRESH_MINUTES=60" `
-    "WORKERS=4" "LOG_FORMAT=json" "LOG_LEVEL=INFO" "ENABLE_DOCS=false"
+    "WORKERS=4" "LOG_FORMAT=json" "LOG_LEVEL=INFO" "MCP_ENABLED=true" "ENABLE_DOCS=false"
 ```
 
 Ingress is HTTPS only: Container Apps terminates TLS and redirects HTTP; confirm with

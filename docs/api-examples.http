@@ -102,3 +102,11 @@ Content-Type: text/plain
 X-API-Key: {{apiKey}}
 
 FAKESQL01 is down.
+
+### MCP over HTTP: list the tools (stateless JSON-RPC)
+POST {{base}}/mcp
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-API-Key: {{apiKey}}
+
+{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}

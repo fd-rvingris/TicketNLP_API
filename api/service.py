@@ -1,5 +1,5 @@
 """The service layer, with no HTTP code: loads the models once and answers detect(), classify(),
-analyze() and catalog() with the JSON bodies the HTTP endpoints return.
+analyze() and catalog() with the JSON bodies the HTTP endpoints and the MCP tools return.
 
 It reuses the package's functions: ticket_analysis.analysis builds the ticket and runs the detector,
 ticket_analysis.ticket_types classifies. The known names come from the DirectoryCache (directory

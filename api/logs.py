@@ -2,7 +2,7 @@
 
 The API never logs request bodies, subjects, ticket text or detected names. Request lines carry the
 method, path, status, latency, request id, text length and whether an org id was given. Libraries that
-could log request content at DEBUG (the Azure SDK, the HTTP clients) are kept at WARNING.
+could log request content at DEBUG (the MCP SDK, the Azure SDK) are kept at WARNING.
 """
 
 from __future__ import annotations
@@ -13,8 +13,9 @@ import sys
 from datetime import datetime, timezone
 
 # Extra fields a log record may carry (logger.info(..., extra={...})); everything else is dropped.
-FIELDS = ("method", "path", "status", "latencyMs", "requestId", "textLength", "orgIdGiven", "caller", "operation")
-QUIET = ("azure", "httpx", "httpx2", "httpcore", "httpcore2", "multipart", "uvicorn.access")
+FIELDS = ("method", "path", "status", "latencyMs", "requestId", "textLength", "orgIdGiven", "caller", "tool",
+          "operation")
+QUIET = ("mcp", "azure", "httpx", "httpx2", "httpcore", "httpcore2", "sse_starlette", "multipart", "uvicorn.access")
 
 
 class JsonFormatter(logging.Formatter):
@@ -46,7 +47,7 @@ class TextFormatter(logging.Formatter):
 
 
 def configure(level: str = "INFO", fmt: str = "json") -> None:
-    """Configure the root logger once, on stderr."""
+    """Configure the root logger once (stderr, so a stdio MCP server's stdout stays clean)."""
     root = logging.getLogger()
     for h in list(root.handlers):
         if getattr(h, "_ticket_api", False):

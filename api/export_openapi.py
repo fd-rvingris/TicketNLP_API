@@ -21,7 +21,7 @@ def openapi_document() -> dict:
     from .app import create_app
     from .settings import load_settings
     # Any valid settings give the same document; these load nothing and serve nothing.
-    settings = load_settings(auth_mode="api_key", api_keys="x" * 32, enable_docs=False)
+    settings = load_settings(auth_mode="api_key", api_keys="x" * 32, enable_docs=False, mcp_enabled=False)
     return create_app(settings, load=False, configure_logging=False).openapi()
 
 
